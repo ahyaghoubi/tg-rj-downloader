@@ -56,7 +56,7 @@ A Cloudflare Worker script that turns your Telegram bot into a Radio Javan media
 1. **Clone the Repository**
 
    ```sh
-   git clone https://github.com/yourusername/your-repo.git
+   git clone https://github.com/ahyaghoubi/tg-rj-downloader.git
    cd your-repo
    ```
 
