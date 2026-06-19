@@ -2,5 +2,46 @@ name = "telegram-radiojavan"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
-# Set BOT_TOKEN before deploying:
+# Required secrets (set before deploying):
 #   npx wrangler secret put BOT_TOKEN
+#   npx wrangler secret put JOB_RUNNER_SECRET
+#
+# Optional secrets:
+#   npx wrangler secret put RJ_API_KEY
+#   npx wrangler secret put RJ_USER_AGENT
+
+# Reusable Telegram audio cache (file_id reuse). Optional but recommended.
+# Create with: npx wrangler kv namespace create TELEGRAM_FILE_CACHE
+[[kv_namespaces]]
+binding = "TELEGRAM_FILE_CACHE"
+id = "62022af1fd724b10a4d6921c84f0e99d"
+
+# Resumable artist delivery jobs. Required for batched artist delivery.
+# Create with: npx wrangler kv namespace create ARTIST_JOB_STORE
+[[kv_namespaces]]
+binding = "ARTIST_JOB_STORE"
+id = "1302c1b36a434ec6bb93a89f540232da"
+
+# Internal self-call binding used to continue artist batches smoothly.
+[[services]]
+binding = "WORKER_SELF"
+service = "telegram-radiojavan"
+
+[[queues.producers]]
+binding = "ARTIST_QUEUE"
+queue = "telegram-radiojavan-artist-delivery"
+
+[[queues.consumers]]
+queue = "telegram-radiojavan-artist-delivery"
+max_batch_size = 1
+max_batch_timeout = 1
+max_retries = 3
+
+[vars]
+ARTIST_DELIVERY_MODE = "queue"
+ENABLE_BULK_CACHE_WRITES = "false"
+MAX_ACTIVE_ARTIST_JOBS = "1"
+
+# Watchdog that resumes stuck artist jobs and promotes queued ones.
+[triggers]
+crons = ["* * * * *"]
