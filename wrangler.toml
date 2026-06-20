@@ -36,11 +36,13 @@ queue = "telegram-radiojavan-artist-delivery"
 max_batch_size = 1
 max_batch_timeout = 1
 max_retries = 3
+max_concurrency = 1
 
 [vars]
 ARTIST_DELIVERY_MODE = "queue"
 ENABLE_BULK_CACHE_WRITES = "false"
 MAX_ACTIVE_ARTIST_JOBS = "1"
+ARTIST_QUEUE_DELAY_SECONDS = "2"
 
 # Watchdog that resumes stuck artist jobs and promotes queued ones.
 [triggers]

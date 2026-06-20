@@ -273,6 +273,10 @@ function getMaxActiveArtistJobs(env) {
   return getEnvNumber(env, "MAX_ACTIVE_ARTIST_JOBS", MAX_GLOBAL_ACTIVE_JOBS);
 }
 
+function getArtistQueueDelaySeconds(env) {
+  return Math.min(getEnvNumber(env, "ARTIST_QUEUE_DELAY_SECONDS", 2), 60);
+}
+
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -315,6 +319,19 @@ function extractLinkFromMessage(message) {
     return null;
   }
 
+  if (message.entities) {
+    for (const entity of message.entities) {
+      if (entity.type === "url") {
+        return normalizeInput(message.text.slice(entity.offset, entity.offset + entity.length));
+      }
+    }
+  }
+
+  const urlMatch = message.text.match(/(?:https?:\/\/|(?:www\.)?(?:play\.)?radiojavan\.com\/|rj\.app\/)\S+/i);
+  if (urlMatch) {
+    return normalizeInput(urlMatch[0]);
+  }
+
   const normalized = normalizeInput(message.text);
   if (
     normalized.startsWith("http") ||
@@ -322,14 +339,6 @@ function extractLinkFromMessage(message) {
     normalized.startsWith("rj.app")
   ) {
     return normalized;
-  }
-
-  if (message.entities) {
-    for (const entity of message.entities) {
-      if (entity.type === "url") {
-        return normalizeInput(message.text.slice(entity.offset, entity.offset + entity.length));
-      }
-    }
   }
 
   return null;
@@ -1226,9 +1235,12 @@ async function runQueuedArtistMessage(env, body) {
     return;
   }
 
-  await enqueueArtistQueueMessage(env, payload);
+  const delaySeconds = getArtistQueueDelaySeconds(env);
+  await enqueueArtistQueueMessage(env, payload, { delaySeconds });
   console.log(
-    `Queue artist delivery ${payload.artistName}: enqueued index ${payload.nextIndex + 1}/${payload.total}`
+    `Queue artist delivery ${payload.artistName}: enqueued index ${
+      payload.nextIndex + 1
+    }/${payload.total} after ${delaySeconds}s`
   );
 }
 
@@ -1827,3 +1839,30 @@ async function sendMessage(chatId, text, botToken) {
     body: JSON.stringify({ chat_id: chatId, text }),
   });
 }
+
+export {
+  TelegramRateLimitError,
+  cacheTelegramFile,
+  callTelegram,
+  compactQueuedTrack,
+  createQueuedArtistPayload,
+  createStatelessArtistPayload,
+  deleteCachedTelegramFile,
+  extractArtistName,
+  extractLinkFromMessage,
+  extractTracksFromPayload,
+  getCachedTelegramFile,
+  getArtistQueueDelaySeconds,
+  getMp3QualityRank,
+  handleHealth,
+  handleUrl,
+  normalizeInput,
+  orderSongUrls,
+  parseMediaFromUrl,
+  processUpdate,
+  resolveSongUrls,
+  runStatelessArtistBatch,
+  runQueuedArtistMessage,
+  runWatchdog,
+  sendTrackToUser,
+};
