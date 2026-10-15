@@ -112,8 +112,37 @@ function parseMediaFromUrl(link) {
   if (segments.length < 2) {
     throw new Error(`Invalid URL format: ${link}`);
   }
+
+  const mediaType = decodePathSegment(segments[0]).toLowerCase();
+
+  // play.radiojavan.com/playlist/mp3/{id} (and /playlists/mp3/{id})
+  if ((mediaType === "playlist" || mediaType === "playlists") && segments.length >= 3) {
+    const maybeSubtype = decodePathSegment(segments[1]).toLowerCase();
+    if (maybeSubtype === "mp3" || maybeSubtype === "video" || maybeSubtype === "podcast") {
+      return {
+        mediaType: "playlist",
+        mediaName: decodePathSegment(segments[2]),
+        playlistSubtype: maybeSubtype,
+      };
+    }
+  }
+
+  if (mediaType === "playlists") {
+    return {
+      mediaType: "playlist",
+      mediaName: decodePathSegment(segments[1]),
+    };
+  }
+
+  if (mediaType === "albums") {
+    return {
+      mediaType: "album",
+      mediaName: decodePathSegment(segments[1]),
+    };
+  }
+
   return {
-    mediaType: decodePathSegment(segments[0]),
+    mediaType,
     mediaName: decodePathSegment(segments[1]),
   };
 }

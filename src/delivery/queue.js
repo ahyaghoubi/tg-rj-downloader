@@ -20,11 +20,18 @@ function getArtistJobTrackKey(track) {
 }
 
 function compactQueuedTrack(track) {
-  return {
+  const compact = {
     permlink: track.permlink,
     title: track.title || track.permlink,
     mediaType: track.mediaType || "song",
   };
+  if (track.artist) {
+    compact.artist = String(track.artist).slice(0, 64);
+  }
+  if (Number.isFinite(Number(track.duration)) && Number(track.duration) > 0) {
+    compact.duration = Math.round(Number(track.duration));
+  }
+  return compact;
 }
 
 function createQueuedArtistPayload(chatId, artistName, tracks, options = {}) {
@@ -89,12 +96,29 @@ async function enqueueArtistQueueDelivery(env, chatId, artistName, tracks, optio
         return payload;
       }
 
+      let activeTotal = null;
+      try {
+        activeTotal = Number(JSON.parse(activeRaw)?.total) || null;
+      } catch (_) {
+        // ignore
+      }
+
       await putKv(kv, queueChatPendingKey(chatId), JSON.stringify(payload));
+      const activeLabel = activeArtist
+        ? activeTotal
+          ? `${activeArtist} — ${activeTotal} آهنگ`
+          : activeArtist
+        : "ارسال فعلی";
       await sendMessage(
         chatId,
-        `الان یک ارسال در حال انجام است` +
-          (activeArtist ? ` (${activeArtist})` : "") +
-          `. ${label} ${artistName} (${tracks.length} آهنگ) بعدی در صف است. برای توقف مورد فعلی /cancel را بفرستید.`,
+        [
+          `موقعیت صف برای این چت:`,
+          `۱) در حال ارسال: ${activeLabel}`,
+          `۲) در انتظار: ${label} «${artistName}» (${tracks.length} آهنگ)`,
+          ``,
+          `بعد از اتمام مورد ۱، مورد ۲ خودکار شروع می‌شود.`,
+          `برای توقف مورد فعلی /cancel را بفرستید.`,
+        ].join("\n"),
         token
       );
       return payload;

@@ -138,6 +138,22 @@ async function handleRecentCommand(chatId, env) {
           callback_data: await makeCallbackData(env, "s", item.value),
         },
       ]);
+    } else if (item.type === "playlist") {
+      lines.push(`• پلی‌لیست: ${item.label || item.value}`);
+      rows.push([
+        {
+          text: `📋 ${item.label || item.value}`.slice(0, 64),
+          callback_data: await makeCallbackData(env, "p", item.value),
+        },
+      ]);
+    } else if (item.type === "album") {
+      lines.push(`• آلبوم: ${item.label || item.value}`);
+      rows.push([
+        {
+          text: `💿 ${item.label || item.value}`.slice(0, 64),
+          callback_data: await makeCallbackData(env, "b", item.value),
+        },
+      ]);
     }
   }
 

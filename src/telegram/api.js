@@ -1,3 +1,5 @@
+import { RATE_LIMIT_FALLBACK_SECONDS } from "../config.js";
+
 class TelegramRateLimitError extends Error {
   constructor(retryAfter) {
     super(`Telegram rate limited; retry after ${retryAfter}s`);

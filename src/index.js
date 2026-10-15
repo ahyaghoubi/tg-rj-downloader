@@ -103,7 +103,15 @@ export {
   parseMediaFromUrl,
   resolveSongUrls,
 } from "./rj/urls.js";
-export { extractTracksFromPayload } from "./rj/tracks.js";
+export {
+  extractTracksFromPayload,
+  extractPlaylistsFromPayload,
+  fetchArtistCatalog,
+  fetchPlaylistTracks,
+  fetchAlbumTracks,
+  selectArtistTracks,
+  sortTracksByNewest,
+} from "./rj/tracks.js";
 export {
   cacheTelegramFile,
   deleteCachedTelegramFile,
@@ -119,8 +127,10 @@ export {
 } from "./bot/commands.js";
 export { handleSearchQuery, searchRadioJavan } from "./bot/search.js";
 export { handleInlineQuery } from "./bot/inline.js";
-export { processUpdate } from "./bot/update.js";
+export { processUpdate, handleStartPayload } from "./bot/update.js";
 export { handleUrl } from "./bot/handle-url.js";
+export { presentArtistMenu, startArtistDelivery } from "./bot/artist-menu.js";
+export { makeStartPayload, resolveStartPayload } from "./bot/start-payload.js";
 export { handleHealth } from "./routes/http.js";
 export {
   compactQueuedTrack,
@@ -130,4 +140,5 @@ export {
 } from "./delivery/queue.js";
 export { handleArtistDeliveryDlq } from "./delivery/dlq.js";
 export { warmArtistMissingTracks } from "./delivery/warm.js";
+export { buildAudioMeta } from "./telegram/send.js";
 

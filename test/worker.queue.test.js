@@ -301,7 +301,8 @@ test("enqueueArtistQueueDelivery serializes a second artist for the same chat", 
     assert.equal(env.queueMessages[0].payload.artistName, "chaartaar");
     assert.ok(env.ARTIST_JOB_STORE.store.has("artist-queue-active:v1:224032101"));
     assert.ok(env.ARTIST_JOB_STORE.store.has("artist-queue-pending:v1:224032101"));
-    assert.match(telegram.calls.at(-1).init.body, /hichkas \(1 آهنگ\) بعدی در صف/);
+    assert.match(telegram.calls.at(-1).init.body, /موقعیت صف/);
+    assert.match(telegram.calls.at(-1).init.body, /در انتظار:.*hichkas/);
   } finally {
     telegram.restore();
   }

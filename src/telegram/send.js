@@ -14,6 +14,23 @@ import {
 } from "../cache/telegram-file.js";
 import { TelegramRateLimitError, callTelegram } from "./api.js";
 
+function buildAudioMeta(track) {
+  const meta = {};
+  const title = track?.title || track?.song || track?.permlink;
+  const performer = track?.artist || track?.performer;
+  const duration = Number(track?.duration);
+  if (title) {
+    meta.title = String(title).slice(0, 64);
+  }
+  if (performer) {
+    meta.performer = String(performer).slice(0, 64);
+  }
+  if (Number.isFinite(duration) && duration > 0) {
+    meta.duration = Math.round(duration);
+  }
+  return meta;
+}
+
 async function sendDocument(chatId, fileBlob, fileName, botToken) {
   const formData = new FormData();
   formData.append("chat_id", chatId);
@@ -22,10 +39,14 @@ async function sendDocument(chatId, fileBlob, fileName, botToken) {
   return callTelegram(botToken, "sendDocument", { body: formData });
 }
 
-async function sendAudioByUrl(chatId, audioUrl, botToken) {
+async function sendAudioByUrl(chatId, audioUrl, botToken, track = null) {
   return callTelegram(botToken, "sendAudio", {
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, audio: audioUrl }),
+    body: JSON.stringify({
+      chat_id: chatId,
+      audio: audioUrl,
+      ...buildAudioMeta(track),
+    }),
   });
 }
 
@@ -36,10 +57,14 @@ async function sendAudioByFileId(chatId, fileId, botToken) {
   });
 }
 
-async function sendAudio(chatId, fileBlob, fileName, botToken) {
+async function sendAudio(chatId, fileBlob, fileName, botToken, track = null) {
   const formData = new FormData();
   formData.append("chat_id", chatId);
   formData.append("audio", new File([fileBlob], fileName));
+  const meta = buildAudioMeta(track);
+  for (const [key, value] of Object.entries(meta)) {
+    formData.append(key, String(value));
+  }
 
   return callTelegram(botToken, "sendAudio", { body: formData });
 }
@@ -61,7 +86,7 @@ async function answerCallbackQuery(callbackQueryId, botToken, text = "") {
   });
 }
 
-async function answerInlineQuery(inlineQueryId, results, botToken) {
+async function answerInlineQuery(inlineQueryId, results, botToken, extra = {}) {
   return callTelegram(botToken, "answerInlineQuery", {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -69,6 +94,7 @@ async function answerInlineQuery(inlineQueryId, results, botToken) {
       results,
       cache_time: 5,
       is_personal: true,
+      ...extra,
     }),
   });
 }
@@ -118,7 +144,7 @@ async function sendTrackToUser(
 
         urlAttempts += 1;
         try {
-          const result = await sendAudioByUrl(userId, audioUrl, token);
+          const result = await sendAudioByUrl(userId, audioUrl, token, track);
           if (cacheUploads) {
             await cacheTelegramFile(env, track, quality, result?.audio?.file_id, audioUrl);
           }
@@ -144,7 +170,7 @@ async function sendTrackToUser(
         validate: false,
       });
       const fileName = `${track.permlink}.${getFileExtension(sourceUrl)}`;
-      const result = await sendAudio(userId, blob, fileName, token);
+      const result = await sendAudio(userId, blob, fileName, token, track);
       if (cacheUploads) {
         await cacheTelegramFile(env, track, quality, result?.audio?.file_id, sourceUrl);
       }
@@ -162,6 +188,7 @@ async function sendTrackToUser(
 }
 
 export {
+  buildAudioMeta,
   sendDocument,
   sendAudioByUrl,
   sendAudioByFileId,

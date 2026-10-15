@@ -1,16 +1,28 @@
-import { MAX_SEARCH_ARTISTS, MAX_SEARCH_SONGS, getBotToken } from "../config.js";
+import {
+  MAX_SEARCH_ARTISTS,
+  MAX_SEARCH_SONGS,
+  MAX_SEARCH_PLAYLISTS,
+  getBotToken,
+} from "../config.js";
 import { fetchRadioJavanApi } from "../rj/api.js";
-import { isSkippedTrack } from "../rj/tracks.js";
+import { extractPlaylistsFromPayload, isSkippedTrack } from "../rj/tracks.js";
 import { sendMessage } from "../telegram/send.js";
 import { makeCallbackData } from "./callback-store.js";
 import { pushUserRecent } from "./commands.js";
 
-function summarizeSearchResults(artists, songs) {
+function summarizeSearchResults(artists, songs, playlists = []) {
   const lines = ["نتایج جستجو — روی دکمه بزنید:"];
   if (artists.length) {
     lines.push("", "خواننده‌ها:");
     for (const artist of artists) {
       lines.push(`• ${artist.name}`);
+    }
+  }
+  if (playlists.length) {
+    lines.push("", "پلی‌لیست‌ها:");
+    for (const playlist of playlists) {
+      const count = playlist.count ? ` (${playlist.count})` : "";
+      lines.push(`• ${playlist.title}${count}`);
     }
   }
   if (songs.length) {
@@ -19,19 +31,28 @@ function summarizeSearchResults(artists, songs) {
       lines.push(`• ${song.artist ? `${song.artist} - ` : ""}${song.song || song.title || song.permlink}`);
     }
   }
-  if (!artists.length && !songs.length) {
-    return "آهنگ یا خواننده‌ای پیدا نشد.";
+  if (!artists.length && !songs.length && !playlists.length) {
+    return "آهنگ، خواننده یا پلی‌لیستی پیدا نشد.";
   }
   return lines.join("\n");
 }
 
-async function buildSearchKeyboard(env, artists, songs) {
+async function buildSearchKeyboard(env, artists, songs, playlists = []) {
   const rows = [];
   for (const artist of artists) {
     rows.push([
       {
         text: `🎤 ${artist.name}`.slice(0, 64),
         callback_data: await makeCallbackData(env, "a", artist.query || artist.name),
+      },
+    ]);
+  }
+  for (const playlist of playlists) {
+    const count = playlist.count ? ` (${playlist.count})` : "";
+    rows.push([
+      {
+        text: `📋 ${playlist.title}${count}`.slice(0, 64),
+        callback_data: await makeCallbackData(env, "p", playlist.id),
       },
     ]);
   }
@@ -50,7 +71,7 @@ async function buildSearchKeyboard(env, artists, songs) {
 async function searchRadioJavan(env, query) {
   const trimmed = String(query || "").trim();
   if (!trimmed) {
-    return { artists: [], songs: [] };
+    return { artists: [], songs: [], playlists: [] };
   }
 
   const data = await fetchRadioJavanApi(
@@ -87,11 +108,15 @@ async function searchRadioJavan(env, query) {
       return;
     }
     seenSongs.add(key);
+    const duration = Number(item.duration);
     songs.push({
       permlink: item.permlink,
       title: item.title || item.song || item.permlink,
       song: item.song || item.title || item.permlink,
       artist: item.artist || "",
+      duration: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : null,
+      photo: item.photo || item.thumbnail || null,
+      link: item.link || item.hq_link || item.lq_link || null,
     });
   };
 
@@ -112,9 +137,12 @@ async function searchRadioJavan(env, query) {
     pushSong(item);
   }
 
+  const playlists = extractPlaylistsFromPayload(data).slice(0, MAX_SEARCH_PLAYLISTS);
+
   return {
     artists: artists.slice(0, MAX_SEARCH_ARTISTS),
     songs: songs.slice(0, MAX_SEARCH_SONGS),
+    playlists,
   };
 }
 
@@ -122,21 +150,21 @@ async function handleSearchQuery(chatId, query, env) {
   const token = getBotToken(env);
   const trimmed = String(query || "").trim();
   if (!trimmed) {
-    await sendMessage(chatId, "نحوهٔ استفاده: /search <آهنگ یا خواننده>", token);
+    await sendMessage(chatId, "نحوهٔ استفاده: /search <آهنگ، خواننده یا پلی‌لیست>", token);
     return;
   }
 
   await sendMessage(chatId, `در حال جستجو برای «${trimmed}»...`, token);
-  const { artists, songs } = await searchRadioJavan(env, trimmed);
+  const { artists, songs, playlists } = await searchRadioJavan(env, trimmed);
   await pushUserRecent(env, chatId, { type: "search", value: trimmed, label: trimmed });
 
-  if (!artists.length && !songs.length) {
+  if (!artists.length && !songs.length && !playlists.length) {
     await sendMessage(chatId, `نتیجه‌ای برای «${trimmed}» پیدا نشد.`, token);
     return;
   }
 
-  const keyboard = await buildSearchKeyboard(env, artists, songs);
-  await sendMessage(chatId, summarizeSearchResults(artists, songs), token, {
+  const keyboard = await buildSearchKeyboard(env, artists, songs, playlists);
+  await sendMessage(chatId, summarizeSearchResults(artists, songs, playlists), token, {
     reply_markup: keyboard,
   });
 }

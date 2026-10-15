@@ -42,6 +42,15 @@ test("parseMediaFromUrl and extractArtistName parse expected URL shapes", () => 
     mediaType: "song",
     mediaName: "Ebi-Test",
   });
+  assert.deepEqual(parseMediaFromUrl("https://play.radiojavan.com/playlist/mp3/07ad54184f83"), {
+    mediaType: "playlist",
+    mediaName: "07ad54184f83",
+    playlistSubtype: "mp3",
+  });
+  assert.deepEqual(parseMediaFromUrl("https://play.radiojavan.com/album/Chaartaar-Baaraan-Toee"), {
+    mediaType: "album",
+    mediaName: "Chaartaar-Baaraan-Toee",
+  });
   assert.equal(extractArtistName("https://play.radiojavan.com/artist/ebi"), "ebi");
   assert.equal(
     extractArtistName("https://play.radiojavan.com/artist/Kamran%20%26%20Hooman"),

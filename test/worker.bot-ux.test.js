@@ -157,14 +157,16 @@ test("callback query for song schedules download path via handleUrl", async () =
   }
 });
 
-test("inline query returns article results", async () => {
+test("inline query returns direct audio for songs with CDN links", async () => {
   const fetchMock = searchAndTelegramFetch();
-  const env = createEnv();
+  const env = createEnv({ BOT_USERNAME: "rjdlbot" });
   try {
     await handleInlineQuery({ id: "iq1", query: "ebi", from: { id: 224032101 } }, env);
     const body = fetchMock.calls.find((call) => call.url.includes("answerInlineQuery"))?.init.body;
+    assert.match(body, /"type":"audio"/);
+    assert.match(body, /Ebi-Gheseh-Eshgh/);
     assert.match(body, /خواننده: Ebi/);
-    assert.match(body, /play\.radiojavan\.com\/song\/Ebi-Gheseh-Eshgh/);
+    assert.match(body, /t\.me\/rjdlbot\?start=/);
   } finally {
     fetchMock.restore();
   }
