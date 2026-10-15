@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildFallbackUrls,
   extractArtistName,
   extractLinkFromMessage,
   getMp3QualityRank,
+  hostnameOf,
   normalizeInput,
   orderSongUrls,
   parseMediaFromUrl,
@@ -59,6 +61,20 @@ test("resolveSongUrls upgrades 256 to candidate 320, dedupes, and orders candida
   assert.equal(urls[0], "https://cdn.example.com/media/mp3/mp3-320/Ebi-Test.mp3");
   assert.equal(new Set(urls).size, urls.length);
   assert.ok(urls.some((url) => url.includes("mp3-256")));
+  // With API URLs present, constructed CDN fallbacks are skipped.
+  assert.ok(urls.every((url) => url.includes("cdn.example.com")));
+  assert.ok(urls.length <= 3);
+});
+
+test("buildFallbackUrls prefers primary hosts and limits casing variants", () => {
+  const urls = buildFallbackUrls("song", "Ebi-Test");
+  assert.ok(urls.every((url) => hostnameOf(url) === "host1.rj-mw1.com" || hostnameOf(url) === "host1.rjapp-content.app"));
+  assert.ok(urls.some((url) => url.includes("host1.rj-mw1.com/media/mp3/mp3-320/Ebi-Test.mp3")));
+  assert.ok(urls.some((url) => url.includes("host1.rj-mw1.com/media/mp3/mp3-320/ebi-test.mp3")));
+  assert.equal(
+    urls.filter((url) => url.includes("host1.rjapp-content.app") && url.includes("ebi-test")).length,
+    0
+  );
 });
 
 test("orderSongUrls sorts preferred qualities first", () => {

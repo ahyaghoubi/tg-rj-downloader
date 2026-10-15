@@ -29,6 +29,36 @@ export default {
         return new Response("OK", { status: 200 });
       }
 
+      if (url.pathname === "/internal/warm-artist") {
+        const secret = env.JOB_RUNNER_SECRET;
+        if (!secret || getBearerToken(request) !== secret) {
+          return new Response("Forbidden", { status: 403 });
+        }
+
+        let chatId = url.searchParams.get("chatId") || url.searchParams.get("userid");
+        let artistName = url.searchParams.get("artist") || url.searchParams.get("artistName");
+        if (request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          chatId = body.chatId || body.userid || chatId;
+          artistName = body.artistName || body.artist || artistName;
+        }
+
+        if (!chatId || !artistName) {
+          return new Response("Missing chatId/userid or artistName/artist", { status: 400 });
+        }
+        if (!env.ARTIST_QUEUE) {
+          return new Response("ARTIST_QUEUE is not configured", { status: 500 });
+        }
+
+        ctx.waitUntil(warmArtistMissingTracks(env, String(chatId), String(artistName)));
+        return jsonResponse({
+          ok: true,
+          mode: "warm-missing-only",
+          chatId: String(chatId),
+          artistName: String(artistName),
+        });
+      }
+
       if (request.method === "POST" && url.pathname === "/webhook") {
         const token = getBotToken(env);
         if (!token) {
@@ -81,6 +111,18 @@ export default {
   },
 
   async queue(batch, env, ctx) {
+    if (batch.queue === ARTIST_DELIVERY_DLQ_NAME) {
+      for (const message of batch.messages) {
+        try {
+          await handleArtistDeliveryDlq(env, message.body);
+        } catch (err) {
+          console.error(`Artist delivery DLQ handling failed: ${err.message}`);
+        }
+        message.ack();
+      }
+      return;
+    }
+
     for (const message of batch.messages) {
       try {
         await runQueuedArtistMessage(env, message.body);
@@ -109,12 +151,15 @@ const RJ_DEFAULTS = {
   ORIGIN: "https://play.radiojavan.com",
 };
 
+// Prefer hosts that Telegram can fetch reliably; host2.rj-mw1.com often fails URL send.
 const MEDIA_HOSTS = [
-  "host2.rj-mw1.com",
   "host1.rj-mw1.com",
-  "host2.rjapp-content.app",
   "host1.rjapp-content.app",
+  "host2.rjapp-content.app",
+  "host2.rj-mw1.com",
 ];
+
+const FALLBACK_HOST_LIMIT = 2;
 
 const MEDIA_PATH_TEMPLATES = {
   song: [
@@ -122,6 +167,15 @@ const MEDIA_PATH_TEMPLATES = {
     ["media/mp3/mp3-256", "mp3"],
   ],
 };
+
+const ARTIST_DELIVERY_QUEUE_NAME = "telegram-radiojavan-artist-delivery";
+const ARTIST_DELIVERY_DLQ_NAME = "telegram-radiojavan-artist-delivery-dlq";
+const QUEUE_CHAT_ACTIVE_PREFIX = "artist-queue-active:v1";
+const QUEUE_CHAT_PENDING_PREFIX = "artist-queue-pending:v1";
+const QUEUE_CHAT_ACTIVE_TTL_S = 60 * 60;
+const DEFAULT_MAX_AUDIO_URL_ATTEMPTS = 3;
+const MEDIA_PROBE_TIMEOUT_MS = 4_000;
+const MEDIA_DOWNLOAD_TIMEOUT_MS = 25_000;
 
 function upgradeTo320Url(url) {
   if (typeof url !== "string" || /mp3-320/i.test(url)) {
@@ -184,8 +238,12 @@ function resolveSongUrls(mediaType, permlink, apiUrls = []) {
     push(url);
   }
 
-  for (const url of buildFallbackUrls(mediaType, permlink)) {
-    push(url);
+  // Prefer API URLs only when present. Constructed CDN fallbacks are a last resort
+  // because Telegram often rejects some hosts for URL fetch.
+  if (candidates.length === 0) {
+    for (const url of buildFallbackUrls(mediaType, permlink)) {
+      push(url);
+    }
   }
 
   return orderSongUrls(candidates);
@@ -277,6 +335,18 @@ function getArtistQueueDelaySeconds(env) {
   return Math.min(getEnvNumber(env, "ARTIST_QUEUE_DELAY_SECONDS", 2), 60);
 }
 
+function getMaxAudioUrlAttempts(env) {
+  return Math.min(getEnvNumber(env, "MAX_AUDIO_URL_ATTEMPTS", DEFAULT_MAX_AUDIO_URL_ATTEMPTS), 8);
+}
+
+function queueChatActiveKey(chatId) {
+  return `${QUEUE_CHAT_ACTIVE_PREFIX}:${chatId}`;
+}
+
+function queueChatPendingKey(chatId) {
+  return `${QUEUE_CHAT_PENDING_PREFIX}:${chatId}`;
+}
+
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -298,6 +368,15 @@ async function handleHealth(env) {
       ok: result.ok,
       bot: result.result?.username || null,
       error: result.ok ? null : result.description,
+      artistQueue: ARTIST_DELIVERY_QUEUE_NAME,
+      artistDlq: ARTIST_DELIVERY_DLQ_NAME,
+      bulkCacheWrites: shouldCacheArtistUploads(env),
+      maxAudioUrlAttempts: getMaxAudioUrlAttempts(env),
+      ops: {
+        inspectDlq: `npx wrangler tail && watch ${ARTIST_DELIVERY_DLQ_NAME}`,
+        warmArtist: "POST /internal/warm-artist with Bearer JOB_RUNNER_SECRET",
+        note: "Do not try to cache the entire Radio Javan catalog on the free KV write quota (~1000 writes/day).",
+      },
     },
     result.ok ? 200 : 500
   );
@@ -393,9 +472,12 @@ function buildFallbackUrls(mediaType, permlink) {
   }
 
   const urls = [];
-  for (const host of MEDIA_HOSTS) {
+  const hosts = MEDIA_HOSTS.slice(0, FALLBACK_HOST_LIMIT);
+  for (const [hostIndex, host] of hosts.entries()) {
     for (const [path, ext] of templates) {
-      for (const name of names) {
+      // Only the primary host tries alternate permlink casing.
+      const nameList = hostIndex === 0 ? names : [permlink];
+      for (const name of nameList) {
         const url = `https://${host}/${path}/${name}.${ext}`;
         if (!urls.includes(url)) {
           urls.push(url);
@@ -404,6 +486,18 @@ function buildFallbackUrls(mediaType, permlink) {
     }
   }
   return urls;
+}
+
+function hostnameOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function isTelegramUrlContentError(err) {
+  return /failed to get HTTP URL content/i.test(String(err?.message || err || ""));
 }
 
 function trackFromApiItem(item, mediaType) {
@@ -535,9 +629,15 @@ async function isValidMediaUrl(url) {
   };
 
   try {
-    let response = await fetch(url, { method: "HEAD", headers, redirect: "follow" });
+    const signal = AbortSignal.timeout(MEDIA_PROBE_TIMEOUT_MS);
+    let response = await fetch(url, { method: "HEAD", headers, redirect: "follow", signal });
     if (!response.ok) {
-      response = await fetch(url, { method: "GET", headers, redirect: "follow" });
+      response = await fetch(url, {
+        method: "GET",
+        headers,
+        redirect: "follow",
+        signal: AbortSignal.timeout(MEDIA_PROBE_TIMEOUT_MS),
+      });
     }
 
     if (!response.ok) {
@@ -559,10 +659,21 @@ async function isValidMediaUrl(url) {
   }
 }
 
-async function fetchFileAsBlob(urls) {
+async function fetchFileAsBlob(urls, { deadHosts = null, maxAttempts = DEFAULT_MAX_AUDIO_URL_ATTEMPTS, validate = false } = {}) {
+  let attempts = 0;
   for (const url of urls) {
+    if (attempts >= maxAttempts) {
+      break;
+    }
+
+    const host = hostnameOf(url);
+    if (host && deadHosts?.has(host)) {
+      continue;
+    }
+
+    attempts += 1;
     try {
-      if (!(await isValidMediaUrl(url))) {
+      if (validate && !(await isValidMediaUrl(url))) {
         continue;
       }
 
@@ -570,10 +681,12 @@ async function fetchFileAsBlob(urls) {
         method: "GET",
         headers: {
           "User-Agent": RJ_DEFAULTS.BROWSER_UA,
-          Referer: url,
+          Referer: `${RJ_DEFAULTS.ORIGIN}/`,
+          Origin: RJ_DEFAULTS.ORIGIN,
           Accept: "*/*",
         },
         redirect: "follow",
+        signal: AbortSignal.timeout(MEDIA_DOWNLOAD_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -679,8 +792,43 @@ function getFileCacheStore(env) {
   return env.TELEGRAM_FILE_CACHE || null;
 }
 
+function normalizeCachePermlink(permlink) {
+  return String(permlink || "").toLowerCase();
+}
+
 function getTelegramFileCacheKey(track, quality) {
-  return `${FILE_CACHE_PREFIX}:song:${track.mediaType}:${track.permlink}:${quality}`;
+  const mediaType = String(track.mediaType || "song").toLowerCase();
+  const permlink = normalizeCachePermlink(track.permlink);
+  return `${FILE_CACHE_PREFIX}:song:${mediaType}:${permlink}:${quality}`;
+}
+
+function getLegacyTelegramFileCacheKeys(track, quality) {
+  const mediaType = track.mediaType || "song";
+  const permlink = String(track.permlink || "");
+  const keys = new Set();
+  // Historical keys used the raw permlink casing (and sometimes mixed mediaType casing).
+  keys.add(`${FILE_CACHE_PREFIX}:song:${mediaType}:${permlink}:${quality}`);
+  if (permlink !== permlink.toLowerCase()) {
+    keys.add(`${FILE_CACHE_PREFIX}:song:${mediaType}:${permlink.toLowerCase()}:${quality}`);
+  }
+  if (mediaType !== mediaType.toLowerCase()) {
+    keys.add(`${FILE_CACHE_PREFIX}:song:${mediaType.toLowerCase()}:${permlink}:${quality}`);
+  }
+  keys.delete(getTelegramFileCacheKey(track, quality));
+  return [...keys];
+}
+
+async function readCacheRecord(kv, key) {
+  const raw = await kv.get(key);
+  if (!raw) {
+    return null;
+  }
+  const data = JSON.parse(raw);
+  if (!data || typeof data.fileId !== "string" || !data.fileId) {
+    await kv.delete(key);
+    return null;
+  }
+  return data;
 }
 
 async function getCachedTelegramFile(env, track, quality) {
@@ -691,17 +839,31 @@ async function getCachedTelegramFile(env, track, quality) {
 
   const key = getTelegramFileCacheKey(track, quality);
   try {
-    const raw = await kv.get(key);
-    if (!raw) {
-      return null;
+    const canonical = await readCacheRecord(kv, key);
+    if (canonical) {
+      return canonical;
     }
 
-    const data = JSON.parse(raw);
-    if (!data || typeof data.fileId !== "string" || !data.fileId) {
-      await kv.delete(key);
-      return null;
+    for (const legacyKey of getLegacyTelegramFileCacheKeys(track, quality)) {
+      const legacy = await readCacheRecord(kv, legacyKey);
+      if (!legacy) {
+        continue;
+      }
+
+      // Best-effort migrate to the canonical lowercase key.
+      try {
+        await putKv(kv, key, JSON.stringify({ ...legacy, permlink: track.permlink, quality }));
+        await kv.delete(legacyKey);
+        console.log(`Migrated Telegram file cache key ${legacyKey} -> ${key}`);
+      } catch (err) {
+        if (!(err instanceof KvWriteLimitError)) {
+          console.warn(`Cache migrate failed for ${legacyKey}: ${err.message}`);
+        }
+      }
+      return legacy;
     }
-    return data;
+
+    return null;
   } catch (err) {
     console.warn(`Cache read failed for ${key}: ${err.message}`);
     try {
@@ -734,6 +896,13 @@ async function cacheTelegramFile(env, track, quality, fileId, sourceUrl) {
   try {
     await putKv(kv, key, JSON.stringify(record));
     console.log(`Cached Telegram file_id for ${key}`);
+    for (const legacyKey of getLegacyTelegramFileCacheKeys(track, quality)) {
+      try {
+        await kv.delete(legacyKey);
+      } catch (_) {
+        // best effort cleanup of casing duplicates
+      }
+    }
   } catch (err) {
     if (err instanceof KvWriteLimitError) {
       console.warn(`Skipping Telegram file cache write: ${err.message}`);
@@ -749,22 +918,51 @@ async function deleteCachedTelegramFile(env, track, quality) {
     return;
   }
 
-  const key = getTelegramFileCacheKey(track, quality);
-  try {
-    await kv.delete(key);
-  } catch (err) {
-    console.warn(`Cache delete failed for ${key}: ${err.message}`);
+  const keys = [getTelegramFileCacheKey(track, quality), ...getLegacyTelegramFileCacheKeys(track, quality)];
+  for (const key of keys) {
+    try {
+      await kv.delete(key);
+    } catch (err) {
+      console.warn(`Cache delete failed for ${key}: ${err.message}`);
+    }
   }
 }
 
-async function sendTrackToUser(userId, track, env, { preferUrl = false, cacheUploads = true } = {}) {
+async function isTrackCached(env, track) {
+  for (const quality of ["320", "256"]) {
+    if (await getCachedTelegramFile(env, track, quality)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function filterUncachedTracks(env, tracks) {
+  const missing = [];
+  for (const track of tracks) {
+    if (!(await isTrackCached(env, track))) {
+      missing.push(track);
+    }
+  }
+  return missing;
+}
+
+async function sendTrackToUser(
+  userId,
+  track,
+  env,
+  { preferUrl = true, cacheUploads = true, maxUrlAttempts = null } = {}
+) {
   const token = getBotToken(env);
   const urls = resolveSongUrls(track.mediaType, track.permlink, track.urls);
   if (!urls.length) {
     throw new Error(`No candidate URLs for ${track.permlink}`);
   }
 
+  const attemptLimit = maxUrlAttempts || getMaxAudioUrlAttempts(env);
+  const deadHosts = new Set();
   let lastError;
+
   for (const { quality, urls: qualityUrls } of groupUrlsByQuality(urls)) {
     const cached = await getCachedTelegramFile(env, track, quality);
     if (cached) {
@@ -782,7 +980,17 @@ async function sendTrackToUser(userId, track, env, { preferUrl = false, cacheUpl
     }
 
     if (preferUrl) {
+      let urlAttempts = 0;
       for (const audioUrl of qualityUrls) {
+        if (urlAttempts >= attemptLimit) {
+          break;
+        }
+        const host = hostnameOf(audioUrl);
+        if (host && deadHosts.has(host)) {
+          continue;
+        }
+
+        urlAttempts += 1;
         try {
           const result = await sendAudioByUrl(userId, audioUrl, token);
           if (cacheUploads) {
@@ -794,13 +1002,21 @@ async function sendTrackToUser(userId, track, env, { preferUrl = false, cacheUpl
             throw err;
           }
           lastError = err;
+          if (host && isTelegramUrlContentError(err)) {
+            deadHosts.add(host);
+            console.warn(`Marking host ${host} dead for this send after URL content failure`);
+          }
           console.warn(`URL send failed for ${audioUrl}: ${err.message}`);
         }
       }
     }
 
     try {
-      const { blob, url: sourceUrl } = await fetchFileAsBlob(qualityUrls);
+      // Telegram URL-content failures do not mean the Worker cannot download the same host.
+      const { blob, url: sourceUrl } = await fetchFileAsBlob(qualityUrls, {
+        maxAttempts: attemptLimit,
+        validate: false,
+      });
       const fileName = `${track.permlink}.${getFileExtension(sourceUrl)}`;
       const result = await sendAudio(userId, blob, fileName, token);
       if (cacheUploads) {
@@ -1052,10 +1268,202 @@ async function enqueueArtistDelivery(env, chatId, artistName, tracks, origin) {
   );
 }
 
-async function enqueueArtistQueueDelivery(env, chatId, artistName, tracks) {
+async function enqueueArtistQueueDelivery(env, chatId, artistName, tracks, options = {}) {
   const token = getBotToken(env);
-  await enqueueArtistQueueMessage(env, createQueuedArtistPayload(chatId, artistName, tracks));
-  await sendMessage(chatId, `Found ${tracks.length} songs for ${artistName}. Sending...`, token);
+  const payload = createQueuedArtistPayload(chatId, artistName, tracks, options);
+  const kv = getJobStore(env);
+  const label = payload.warmCache ? "warm" : "delivery";
+
+  if (kv) {
+    const activeRaw = await kv.get(queueChatActiveKey(chatId));
+    if (activeRaw) {
+      await putKv(kv, queueChatPendingKey(chatId), JSON.stringify(payload));
+      await sendMessage(
+        chatId,
+        `You already have a delivery in progress. Queued ${artistName} ${label} (${tracks.length} songs); it will start after the current one finishes.`,
+        token
+      );
+      return payload;
+    }
+
+    try {
+      await putKv(
+        kv,
+        queueChatActiveKey(chatId),
+        JSON.stringify({
+          artistName,
+          total: tracks.length,
+          warmCache: Boolean(payload.warmCache),
+          startedAt: new Date().toISOString(),
+        }),
+        { expirationTtl: QUEUE_CHAT_ACTIVE_TTL_S }
+      );
+    } catch (err) {
+      if (!(err instanceof KvWriteLimitError)) {
+        throw err;
+      }
+      console.warn(`Skipping queue chat lock write: ${err.message}`);
+    }
+  }
+
+  await enqueueArtistQueueMessage(env, payload);
+  if (payload.warmCache) {
+    await sendMessage(
+      chatId,
+      `Warming cache for ${artistName}: ${tracks.length} uncached song(s)` +
+        (payload.originalTotal ? ` of ${payload.originalTotal}` : "") +
+        `. Already-cached tracks are skipped.`,
+      token
+    );
+  } else {
+    await sendMessage(chatId, `Found ${tracks.length} songs for ${artistName}. Sending...`, token);
+  }
+  return payload;
+}
+
+async function warmArtistMissingTracks(env, chatId, artistName) {
+  const token = getBotToken(env);
+  try {
+    const tracks = await fetchArtistTracks(env, artistName);
+    if (!tracks.length) {
+      await sendMessage(chatId, `No songs found for ${artistName}.`, token);
+      return { artistName, total: 0, missing: 0, queued: 0 };
+    }
+
+    const missing = await filterUncachedTracks(env, tracks);
+    if (!missing.length) {
+      await sendMessage(
+        chatId,
+        `All ${tracks.length} songs for ${artistName} are already cached. Nothing to warm.`,
+        token
+      );
+      return { artistName, total: tracks.length, missing: 0, queued: 0 };
+    }
+
+    await enqueueArtistQueueDelivery(env, chatId, artistName, missing, {
+      warmCache: true,
+      originalTotal: tracks.length,
+    });
+    console.log(
+      `Warm artist ${artistName}: queueing ${missing.length}/${tracks.length} uncached tracks for chat ${chatId}`
+    );
+    return {
+      artistName,
+      total: tracks.length,
+      missing: missing.length,
+      queued: missing.length,
+    };
+  } catch (err) {
+    console.error(`Warm artist ${artistName} failed: ${err.message}`);
+    await sendMessage(chatId, `Warm failed for ${artistName}: ${err.message}`, token);
+    throw err;
+  }
+}
+
+async function promotePendingQueueChatDelivery(env, chatId) {
+  const kv = getJobStore(env);
+  if (!kv) {
+    return;
+  }
+
+  const pendingKey = queueChatPendingKey(chatId);
+  const pendingRaw = await kv.get(pendingKey);
+  if (!pendingRaw) {
+    return;
+  }
+
+  try {
+    await kv.delete(pendingKey);
+  } catch (err) {
+    console.warn(`Failed to clear pending queue delivery for ${chatId}: ${err.message}`);
+  }
+
+  let pending;
+  try {
+    pending = JSON.parse(pendingRaw);
+  } catch (err) {
+    console.warn(`Invalid pending queue payload for ${chatId}: ${err.message}`);
+    return;
+  }
+
+  if (!pending?.artistName || !Array.isArray(pending.tracks)) {
+    return;
+  }
+
+  try {
+    await putKv(
+      kv,
+      queueChatActiveKey(chatId),
+      JSON.stringify({
+        artistName: pending.artistName,
+        total: pending.total || pending.tracks.length,
+        startedAt: new Date().toISOString(),
+      }),
+      { expirationTtl: QUEUE_CHAT_ACTIVE_TTL_S }
+    );
+  } catch (err) {
+    if (!(err instanceof KvWriteLimitError)) {
+      throw err;
+    }
+    console.warn(`Skipping queue chat lock write while promoting: ${err.message}`);
+  }
+
+  await enqueueArtistQueueMessage(env, pending);
+  await sendMessage(
+    chatId,
+    `Starting queued delivery for ${pending.artistName} (${pending.total || pending.tracks.length} songs)...`,
+    getBotToken(env)
+  );
+}
+
+async function finishQueueChatDelivery(env, payload) {
+  const kv = getJobStore(env);
+  if (!kv || !payload?.chatId) {
+    return;
+  }
+
+  const activeKey = queueChatActiveKey(payload.chatId);
+  try {
+    const activeRaw = await kv.get(activeKey);
+    if (activeRaw) {
+      let shouldClear = true;
+      try {
+        const active = JSON.parse(activeRaw);
+        if (active?.artistName && payload.artistName && active.artistName !== payload.artistName) {
+          shouldClear = false;
+        }
+      } catch (_) {
+        // Clear unreadable lock records.
+      }
+      if (shouldClear) {
+        await kv.delete(activeKey);
+      }
+    }
+  } catch (err) {
+    console.warn(`Failed to clear queue chat lock for ${payload.chatId}: ${err.message}`);
+  }
+
+  await promotePendingQueueChatDelivery(env, payload.chatId);
+}
+
+async function handleArtistDeliveryDlq(env, body) {
+  const payload = normalizeQueuePayload(body);
+  const token = getBotToken(env);
+  const nextSong = Math.min((payload.nextIndex || 0) + 1, payload.total || 0);
+  const progress = `Stopped at song ${nextSong}/${payload.total || 0} (sent ${payload.sent || 0}).`;
+  console.error(`Artist delivery DLQ for ${payload.artistName} chat ${payload.chatId}: ${progress}`);
+
+  try {
+    await sendMessage(
+      payload.chatId,
+      `Artist delivery for ${payload.artistName} stalled after repeated failures. ${progress} Send the artist link again to resume.`,
+      token
+    );
+  } catch (err) {
+    console.warn(`Failed to notify chat about artist DLQ: ${err.message}`);
+  }
+
+  await finishQueueChatDelivery(env, payload);
 }
 
 async function triggerArtistJobRun(env, origin, jobId) {
@@ -1154,8 +1562,8 @@ function compactQueuedTrack(track) {
   };
 }
 
-function createQueuedArtistPayload(chatId, artistName, tracks) {
-  return {
+function createQueuedArtistPayload(chatId, artistName, tracks, options = {}) {
+  const payload = {
     chatId,
     artistName,
     tracks: tracks.map(compactQueuedTrack),
@@ -1166,6 +1574,13 @@ function createQueuedArtistPayload(chatId, artistName, tracks) {
     sentTrackKeys: [],
     createdAt: new Date().toISOString(),
   };
+  if (options.warmCache) {
+    payload.warmCache = true;
+  }
+  if (Number.isFinite(options.originalTotal) && options.originalTotal > 0) {
+    payload.originalTotal = options.originalTotal;
+  }
+  return payload;
 }
 
 function normalizeQueuePayload(body) {
@@ -1204,7 +1619,8 @@ async function runQueuedArtistMessage(env, body) {
     try {
       await sendTrackToUser(payload.chatId, track, env, {
         preferUrl: true,
-        cacheUploads: shouldCacheArtistUploads(env),
+        // Warm jobs always write cache; normal artist delivery keeps free-tier bulk writes off.
+        cacheUploads: Boolean(payload.warmCache) || shouldCacheArtistUploads(env),
       });
       payload.sentTrackKeys.push(trackKey);
       payload.sent += 1;
@@ -1226,12 +1642,17 @@ async function runQueuedArtistMessage(env, body) {
   }
 
   if (payload.nextIndex >= payload.total) {
-    let summary = `Done with ${payload.artistName}. Sent ${payload.sent}/${payload.total} songs.`;
+    let summary = payload.warmCache
+      ? `Warm complete for ${payload.artistName}. Cached/sent ${payload.sent}/${payload.total} previously missing songs` +
+        (payload.originalTotal ? ` (${payload.originalTotal} total in catalog)` : "") +
+        `.`
+      : `Done with ${payload.artistName}. Sent ${payload.sent}/${payload.total} songs.`;
     if (payload.failed.length) {
       summary += `\n\nCould not send:\n${payload.failed.join("\n")}`;
     }
     await sendMessage(payload.chatId, summary, token);
     console.log(`Queue artist delivery ${payload.artistName}: completed`);
+    await finishQueueChatDelivery(env, payload);
     return;
   }
 
@@ -1699,7 +2120,7 @@ async function handleUrl(userId, url, env, origin) {
     };
 
     try {
-      await sendTrackToUser(userId, track, env);
+      await sendTrackToUser(userId, track, env, { preferUrl: true, cacheUploads: true });
     } catch (err) {
       console.error(`Error sending media: ${err.message}`);
       await sendMessage(
@@ -1841,21 +2262,32 @@ async function sendMessage(chatId, text, botToken) {
 }
 
 export {
+  ARTIST_DELIVERY_DLQ_NAME,
+  ARTIST_DELIVERY_QUEUE_NAME,
   TelegramRateLimitError,
+  buildFallbackUrls,
   cacheTelegramFile,
   callTelegram,
   compactQueuedTrack,
   createQueuedArtistPayload,
   createStatelessArtistPayload,
   deleteCachedTelegramFile,
+  enqueueArtistQueueDelivery,
   extractArtistName,
   extractLinkFromMessage,
   extractTracksFromPayload,
+  filterUncachedTracks,
   getCachedTelegramFile,
   getArtistQueueDelaySeconds,
+  getMaxAudioUrlAttempts,
   getMp3QualityRank,
+  getTelegramFileCacheKey,
+  handleArtistDeliveryDlq,
   handleHealth,
   handleUrl,
+  hostnameOf,
+  isTrackCached,
+  normalizeCachePermlink,
   normalizeInput,
   orderSongUrls,
   parseMediaFromUrl,
@@ -1865,4 +2297,5 @@ export {
   runQueuedArtistMessage,
   runWatchdog,
   sendTrackToUser,
+  warmArtistMissingTracks,
 };

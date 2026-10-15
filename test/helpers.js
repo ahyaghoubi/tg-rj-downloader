@@ -54,8 +54,9 @@ export function createMockCtx() {
   };
 }
 
-export function createQueueBatch(bodies) {
+export function createQueueBatch(bodies, queueName = "telegram-radiojavan-artist-delivery") {
   return {
+    queue: queueName,
     messages: bodies.map((body) => {
       const record = {
         body,
