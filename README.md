@@ -226,8 +226,6 @@ Artist delivery uses [Cloudflare Queues](https://developers.cloudflare.com/queue
 
    Runtime controls on `/admin` (KV, no redeploy): allowlist mode, queue pause, safe numeric overrides (queue delay, progress every, daily limit, bulk cache writes), per-user VIP / allowlist / wipe.
 
-   Content/ops tools on `/admin`: resolve RJ URLs, preview catalogs, search RJ, force-send latest-N artist, promote pending jobs, test-message to admins, export DLQ/errors JSON.
-
 **Notes**
 
 - `TELEGRAM_FILE_CACHE` reuse only works for the same bot that uploaded the file. Cache entries are quality-specific (`320` vs `256`) and keyed by lowercase permlink.

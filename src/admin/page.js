@@ -148,78 +148,6 @@ function renderAdminPage() {
     </section>
 
     <section>
-      <h2>گرم‌کردن کش هنرمند</h2>
-      <div class="row">
-        <label>chatId</label>
-        <input id="warmChatId" placeholder="224032101" />
-        <label>artist</label>
-        <input id="warmArtist" placeholder="Chaartaar" />
-        <button type="button" id="btnWarm">اجرا</button>
-      </div>
-      <pre id="warmOut" class="muted"></pre>
-    </section>
-
-    <section>
-      <h2>کش فایل تلگرام</h2>
-      <div class="row">
-        <label>permlink</label>
-        <input id="cachePermlink" placeholder="Chaartaar-Gele-Kon" style="min-width:220px" />
-        <button type="button" id="btnCacheLookup">جستجو</button>
-        <button type="button" class="danger" id="btnCacheDelete">حذف کش</button>
-      </div>
-      <pre id="cacheOut" class="muted"></pre>
-    </section>
-
-    <section>
-      <h2>ارسال اجباری آهنگ / دیپ‌لینک</h2>
-      <div class="row">
-        <label>chatId</label>
-        <input id="sendChatId" placeholder="224032101" />
-        <label>permlink</label>
-        <input id="sendPermlink" placeholder="Chaartaar-Gele-Kon" style="min-width:200px" />
-        <button type="button" id="btnForceSend">ارسال آهنگ</button>
-      </div>
-      <div class="row">
-        <label>artist</label>
-        <input id="sendArtist" placeholder="Chaartaar" style="min-width:160px" />
-        <label>limit</label>
-        <input id="sendArtistLimit" type="number" min="1" max="500" placeholder="10 یا خالی=همه" style="min-width:120px" />
-        <button type="button" id="btnForceArtist">ارسال هنرمند</button>
-      </div>
-      <div class="row">
-        <label>type</label>
-        <select id="deepType"><option value="s">song</option><option value="a">artist</option><option value="p">playlist</option><option value="b">album</option></select>
-        <label>value</label>
-        <input id="deepValue" placeholder="Chaartaar-Gele-Kon" style="min-width:200px" />
-        <button type="button" class="secondary" id="btnDeepLink">ساخت لینک</button>
-        <button type="button" class="secondary" id="btnTestAdmin">پیام تست به ادمین</button>
-      </div>
-      <pre id="toolsOut" class="muted"></pre>
-    </section>
-
-    <section>
-      <h2>ابزار محتوا (resolve / preview / search)</h2>
-      <div class="row">
-        <label>URL</label>
-        <input id="resolveUrl" placeholder="https://play.radiojavan.com/song/..." style="min-width:280px;flex:1" />
-        <button type="button" id="btnResolve">Resolve</button>
-      </div>
-      <div class="row">
-        <label>type</label>
-        <select id="previewType"><option value="artist">artist</option><option value="playlist">playlist</option><option value="album">album</option></select>
-        <label>value</label>
-        <input id="previewValue" placeholder="Chaartaar" style="min-width:180px" />
-        <button type="button" id="btnPreview">Preview</button>
-      </div>
-      <div class="row">
-        <label>search</label>
-        <input id="adminSearch" placeholder="ebi" style="min-width:180px" />
-        <button type="button" id="btnAdminSearch">جستجو</button>
-      </div>
-      <pre id="contentOut" class="muted"></pre>
-    </section>
-
-    <section>
       <h2>رویدادهای DLQ / خطا / Audit</h2>
       <div class="row">
         <button type="button" id="btnLoadDlq">DLQ</button>
@@ -285,7 +213,6 @@ function renderAdminPage() {
       if (!value) return;
       $("jobChatId").value = value;
       $("userChatId").value = value;
-      if (!$("warmChatId").value) $("warmChatId").value = value;
     }
     function renderSystem(data) {
       const c = data.config || {};
@@ -367,7 +294,6 @@ function renderAdminPage() {
       if (data.user?.note) $("userNote").value = data.user.note;
       if (data.user?.dailyDownloadLimit != null) $("userDailyLimit").value = data.user.dailyDownloadLimit;
       else $("userDailyLimit").value = "";
-      if (!$("sendChatId").value) $("sendChatId").value = chatId;
       return data;
     }
     $("btnLoadUsers").onclick = async () => { try { await loadUsers(false); } catch (e) { $("usersBody").innerHTML = '<tr><td colspan="5">'+e.message+'</td></tr>'; } };
@@ -394,25 +320,6 @@ function renderAdminPage() {
         await loadChat();
       } catch (e) { $("jobOut").textContent = e.message; }
     };
-    $("btnWarm").onclick = async () => {
-      try {
-        const data = await api("/admin/api/warm", { method: "POST", body: JSON.stringify({ chatId: $("warmChatId").value.trim(), artistName: $("warmArtist").value.trim() }) });
-        $("warmOut").textContent = JSON.stringify(data, null, 2);
-      } catch (e) { $("warmOut").textContent = e.message; }
-    };
-    $("btnCacheLookup").onclick = async () => {
-      try {
-        const permlink = $("cachePermlink").value.trim();
-        const data = await api("/admin/api/cache?permlink=" + encodeURIComponent(permlink));
-        $("cacheOut").textContent = JSON.stringify(data, null, 2);
-      } catch (e) { $("cacheOut").textContent = e.message; }
-    };
-    $("btnCacheDelete").onclick = async () => {
-      try {
-        const data = await api("/admin/api/cache/delete", { method: "POST", body: JSON.stringify({ permlink: $("cachePermlink").value.trim() }) });
-        $("cacheOut").textContent = JSON.stringify(data, null, 2);
-      } catch (e) { $("cacheOut").textContent = e.message; }
-    };
     $("btnLoadDlq").onclick = async () => {
       try {
         const data = await api("/admin/api/dlq");
@@ -430,79 +337,6 @@ function renderAdminPage() {
         const data = await api("/admin/api/audit");
         $("dlqOut").textContent = JSON.stringify(data.events || [], null, 2);
       } catch (e) { $("dlqOut").textContent = e.message; }
-    };
-    $("btnForceSend").onclick = async () => {
-      try {
-        const data = await api("/admin/api/send-song", {
-          method: "POST",
-          body: JSON.stringify({ chatId: $("sendChatId").value.trim(), permlink: $("sendPermlink").value.trim() }),
-        });
-        $("toolsOut").textContent = JSON.stringify(data, null, 2);
-      } catch (e) { $("toolsOut").textContent = e.message; }
-    };
-    $("btnForceArtist").onclick = async () => {
-      try {
-        const limitRaw = $("sendArtistLimit").value.trim();
-        const data = await api("/admin/api/send-artist", {
-          method: "POST",
-          body: JSON.stringify({
-            chatId: $("sendChatId").value.trim() || $("jobChatId").value.trim(),
-            artistName: $("sendArtist").value.trim(),
-            limit: limitRaw === "" ? null : Number(limitRaw),
-          }),
-        });
-        $("toolsOut").textContent = JSON.stringify(data, null, 2);
-      } catch (e) { $("toolsOut").textContent = e.message; }
-    };
-    $("btnDeepLink").onclick = async () => {
-      try {
-        const data = await api("/admin/api/deep-link", {
-          method: "POST",
-          body: JSON.stringify({ type: $("deepType").value, value: $("deepValue").value.trim() }),
-        });
-        $("toolsOut").textContent = JSON.stringify(data, null, 2);
-      } catch (e) { $("toolsOut").textContent = e.message; }
-    };
-    $("btnTestAdmin").onclick = async () => {
-      try {
-        const data = await api("/admin/api/test-message", { method: "POST", body: "{}" });
-        $("toolsOut").textContent = JSON.stringify(data, null, 2);
-      } catch (e) { $("toolsOut").textContent = e.message; }
-    };
-    $("btnResolve").onclick = async () => {
-      try {
-        const data = await api("/admin/api/resolve", {
-          method: "POST",
-          body: JSON.stringify({ url: $("resolveUrl").value.trim() }),
-        });
-        $("contentOut").textContent = JSON.stringify(data, null, 2);
-        if (data.mediaName) {
-          $("previewValue").value = data.mediaName;
-          if (data.mediaType === "playlist") $("previewType").value = "playlist";
-          else if (data.mediaType === "album") $("previewType").value = "album";
-          else if (data.mediaType === "artist") $("previewType").value = "artist";
-          if (data.mediaType === "song") {
-            $("sendPermlink").value = data.mediaName;
-            $("deepValue").value = data.mediaName;
-          }
-        }
-      } catch (e) { $("contentOut").textContent = e.message; }
-    };
-    $("btnPreview").onclick = async () => {
-      try {
-        const data = await api("/admin/api/preview", {
-          method: "POST",
-          body: JSON.stringify({ type: $("previewType").value, value: $("previewValue").value.trim() }),
-        });
-        $("contentOut").textContent = JSON.stringify(data, null, 2);
-      } catch (e) { $("contentOut").textContent = e.message; }
-    };
-    $("btnAdminSearch").onclick = async () => {
-      try {
-        const q = $("adminSearch").value.trim();
-        const data = await api("/admin/api/search?q=" + encodeURIComponent(q));
-        $("contentOut").textContent = JSON.stringify(data, null, 2);
-      } catch (e) { $("contentOut").textContent = e.message; }
     };
     $("btnLoadUser").onclick = async () => {
       try { $("jobChatId").value = $("userChatId").value.trim(); await loadChat(); }

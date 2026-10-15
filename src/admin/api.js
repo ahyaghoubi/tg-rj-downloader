@@ -4,7 +4,6 @@ import {
   ADMIN_DLQ_EVENTS_KEY,
   getBotToken,
   getJobStore,
-  getFileCacheStore,
   getAdminUserIds,
   getArtistQueueDelaySeconds,
   getArtistProgressEvery,
@@ -16,20 +15,10 @@ import {
   queueChatCancelKey,
   putKv,
 } from "../config.js";
-import { normalizeArtistName, normalizeInput, parseMediaFromUrl } from "../rj/urls.js";
-import { sendMessage, sendTrackToUser } from "../telegram/send.js";
+import { normalizeArtistName } from "../rj/urls.js";
+import { sendMessage } from "../telegram/send.js";
 import { cancelChatArtistDelivery, readUserRecents } from "../bot/commands.js";
-import { warmArtistMissingTracks } from "../delivery/warm.js";
 import { promotePendingQueueChatDelivery } from "../delivery/queue.js";
-import { enqueueBulkDelivery } from "../bot/artist-menu.js";
-import { searchRadioJavan } from "../bot/search.js";
-import {
-  fetchArtistCatalog,
-  fetchPlaylistTracks,
-  fetchAlbumTracks,
-  selectArtistTracks,
-  resolveDownloadUrls,
-} from "../rj/tracks.js";
 import {
   getUser,
   updateUserFlags,
@@ -52,12 +41,6 @@ import {
   saveRuntimeConfig,
   effectiveConfigSnapshot,
 } from "./runtime-config.js";
-import { makeStartPayload, buildBotStartLink } from "../bot/start-payload.js";
-import {
-  getCachedTelegramFile,
-  deleteCachedTelegramFile,
-  getTelegramFileCacheKey,
-} from "../cache/telegram-file.js";
 
 function jsonResponse(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -261,20 +244,6 @@ async function handleClearPending(env, chatId) {
   return jsonResponse({ ok: true, chatId: String(chatId), cleared: "pending" });
 }
 
-function summarizeTracks(tracks, sample = 5) {
-  const list = Array.isArray(tracks) ? tracks : [];
-  const mapTrack = (track) => ({
-    permlink: track.permlink || null,
-    title: track.title || track.song || track.permlink || null,
-    artist: track.artist || null,
-  });
-  return {
-    count: list.length,
-    first: list.slice(0, sample).map(mapTrack),
-    last: list.length > sample ? list.slice(-sample).map(mapTrack) : [],
-  };
-}
-
 async function handlePromotePending(env, chatId) {
   const kv = getJobStore(env);
   if (!kv) {
@@ -310,7 +279,7 @@ async function handlePromotePending(env, chatId) {
   });
 }
 
-async function handleAdminRequest(request, env, ctx) {
+async function handleAdminRequest(request, env, _ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
 
@@ -383,141 +352,6 @@ async function handleAdminRequest(request, env, ctx) {
     return result;
   }
 
-  if (path === "/admin/api/resolve" && request.method === "POST") {
-    const body = await readJsonOrForm(request);
-    const input = String(body.url || body.value || "").trim();
-    if (!input) {
-      return jsonResponse({ ok: false, error: "url required" }, 400);
-    }
-    try {
-      const normalized = normalizeInput(input);
-      const parsed = parseMediaFromUrl(normalized);
-      return jsonResponse({
-        ok: true,
-        input,
-        normalized,
-        mediaType: parsed.mediaType,
-        mediaName: parsed.mediaName,
-        playlistSubtype: parsed.playlistSubtype || null,
-      });
-    } catch (err) {
-      return jsonResponse({ ok: false, error: err.message }, 400);
-    }
-  }
-
-  if (path === "/admin/api/preview" && request.method === "POST") {
-    const body = await readJsonOrForm(request);
-    const type = String(body.type || "artist").trim().toLowerCase();
-    const value = normalizeArtistName(body.value || body.artistName || body.id || "");
-    if (!value) {
-      return jsonResponse({ ok: false, error: "value required" }, 400);
-    }
-    try {
-      let tracks = [];
-      let meta = { type, value };
-      if (type === "artist" || type === "a") {
-        const catalog = await fetchArtistCatalog(env, value);
-        tracks = catalog.tracks || [];
-        meta.playlists = (catalog.playlists || []).slice(0, 10).map((p) => ({
-          id: p.id,
-          title: p.title,
-          count: p.count || null,
-        }));
-      } else if (type === "playlist" || type === "p") {
-        tracks = await fetchPlaylistTracks(env, value);
-      } else if (type === "album" || type === "b") {
-        tracks = await fetchAlbumTracks(env, value);
-      } else {
-        return jsonResponse({ ok: false, error: "type must be artist|playlist|album" }, 400);
-      }
-      return jsonResponse({ ok: true, ...meta, tracks: summarizeTracks(tracks) });
-    } catch (err) {
-      return jsonResponse({ ok: false, error: err.message }, 500);
-    }
-  }
-
-  if (path === "/admin/api/search" && request.method === "GET") {
-    const query = url.searchParams.get("q") || url.searchParams.get("query") || "";
-    if (!String(query).trim()) {
-      return jsonResponse({ ok: false, error: "q required" }, 400);
-    }
-    try {
-      const results = await searchRadioJavan(env, query);
-      return jsonResponse({
-        ok: true,
-        query: String(query).trim(),
-        artists: (results.artists || []).slice(0, 10),
-        songs: (results.songs || []).slice(0, 15),
-        playlists: (results.playlists || []).slice(0, 10),
-      });
-    } catch (err) {
-      return jsonResponse({ ok: false, error: err.message }, 500);
-    }
-  }
-
-  if (path === "/admin/api/send-artist" && request.method === "POST") {
-    const body = await readJsonOrForm(request);
-    const chatId = body.chatId;
-    const artistName = normalizeArtistName(body.artistName || body.artist || "");
-    const limitRaw = body.limit;
-    const limit =
-      limitRaw == null || limitRaw === "" || limitRaw === "all"
-        ? null
-        : Math.max(1, Math.min(Number(limitRaw) || 0, 500));
-    if (!chatId || !artistName) {
-      return jsonResponse({ ok: false, error: "chatId and artistName required" }, 400);
-    }
-    if (!env.ARTIST_QUEUE) {
-      return jsonResponse({ ok: false, error: "ARTIST_QUEUE is not configured" }, 500);
-    }
-    try {
-      const catalog = await fetchArtistCatalog(env, artistName);
-      const tracks = selectArtistTracks(catalog.tracks, limit);
-      if (!tracks.length) {
-        return jsonResponse({ ok: false, error: "no tracks found" }, 404);
-      }
-      const label = limit ? `${artistName} (آخرین ${tracks.length})` : artistName;
-      ctx.waitUntil(enqueueBulkDelivery(env, String(chatId), label, tracks, { skipQuota: true }));
-      await recordAdminAudit(env, {
-        action: "send-artist",
-        chatId,
-        detail: `${artistName}:${limit == null ? "all" : limit}`,
-      });
-      return jsonResponse({
-        ok: true,
-        chatId: String(chatId),
-        artistName,
-        limit,
-        trackCount: tracks.length,
-        preview: summarizeTracks(tracks, 3),
-      });
-    } catch (err) {
-      return jsonResponse({ ok: false, error: err.message }, 500);
-    }
-  }
-
-  if (path === "/admin/api/test-message" && request.method === "POST") {
-    const admins = getAdminUserIds(env);
-    if (!admins.length) {
-      return jsonResponse({ ok: false, error: "ADMIN_USER_IDS empty" }, 400);
-    }
-    const body = await readJsonOrForm(request);
-    const text =
-      String(body.text || "").trim() ||
-      `تست ادمین · ${new Date().toISOString()} · bot ok`;
-    const results = [];
-    for (const chatId of admins) {
-      try {
-        await sendMessage(chatId, text, getBotToken(env));
-        results.push({ chatId, ok: true });
-      } catch (err) {
-        results.push({ chatId, ok: false, error: err.message });
-      }
-    }
-    await recordAdminAudit(env, { action: "test-message", detail: text.slice(0, 80) });
-    return jsonResponse({ ok: results.every((r) => r.ok), results });
-  }
-
   if (path === "/admin/api/export" && request.method === "GET") {
     const kind = url.searchParams.get("kind") || "errors";
     let events = [];
@@ -534,26 +368,6 @@ async function handleAdminRequest(request, env, ctx) {
         "Content-Type": "application/json; charset=utf-8",
         "Content-Disposition": `attachment; filename="admin-${kind}.json"`,
       },
-    });
-  }
-
-  if (path === "/admin/api/warm" && request.method === "POST") {
-    const body = await readJsonOrForm(request);
-    const chatId = body.chatId;
-    const artistName = normalizeArtistName(body.artistName || body.artist || "");
-    if (!chatId || !artistName) {
-      return jsonResponse({ ok: false, error: "chatId and artistName required" }, 400);
-    }
-    if (!env.ARTIST_QUEUE) {
-      return jsonResponse({ ok: false, error: "ARTIST_QUEUE is not configured" }, 500);
-    }
-    ctx.waitUntil(warmArtistMissingTracks(env, String(chatId), artistName));
-    await recordAdminAudit(env, { action: "warm", chatId, detail: artistName });
-    return jsonResponse({
-      ok: true,
-      mode: "warm-missing-only",
-      chatId: String(chatId),
-      artistName,
     });
   }
 
@@ -692,47 +506,6 @@ async function handleAdminRequest(request, env, ctx) {
     }
   }
 
-  if (path === "/admin/api/send-song" && request.method === "POST") {
-    const body = await readJsonOrForm(request);
-    const chatId = body.chatId;
-    const permlink = String(body.permlink || "").trim();
-    if (!chatId || !permlink) {
-      return jsonResponse({ ok: false, error: "chatId and permlink required" }, 400);
-    }
-    try {
-      const resolved = await resolveDownloadUrls(env, "song", permlink);
-      if (!resolved.urls?.length) {
-        return jsonResponse({ ok: false, error: "No download URLs for song" }, 404);
-      }
-      const track = {
-        permlink,
-        title: resolved.title || permlink,
-        artist: resolved.artist || "",
-        duration: resolved.duration || null,
-        mediaType: "song",
-        urls: resolved.urls,
-      };
-      await sendTrackToUser(chatId, track, env, { preferUrl: true, cacheUploads: true });
-      await recordAdminAudit(env, { action: "send-song", chatId, detail: permlink });
-      return jsonResponse({ ok: true, chatId: String(chatId), permlink });
-    } catch (err) {
-      return jsonResponse({ ok: false, error: err.message }, 500);
-    }
-  }
-
-  if (path === "/admin/api/deep-link" && request.method === "POST") {
-    const body = await readJsonOrForm(request);
-    const type = String(body.type || "s").trim();
-    const value = String(body.value || "").trim();
-    if (!value) {
-      return jsonResponse({ ok: false, error: "value required" }, 400);
-    }
-    const payload = await makeStartPayload(env, type, value);
-    const url = await buildBotStartLink(env, type, value);
-    await recordAdminAudit(env, { action: "deep-link", detail: `${type}:${value}` });
-    return jsonResponse({ ok: true, type, value, payload, url });
-  }
-
   if (path === "/admin/api/errors" && request.method === "GET") {
     return jsonResponse({ ok: true, events: await readAdminErrors(env) });
   }
@@ -774,53 +547,6 @@ async function handleAdminRequest(request, env, ctx) {
       detail: removed?.artistName || null,
     });
     return jsonResponse({ ok: true, removed, remaining: events.length });
-  }
-
-  if (path === "/admin/api/cache" && request.method === "GET") {
-    const permlink = url.searchParams.get("permlink");
-    if (!permlink) {
-      return jsonResponse({ ok: false, error: "permlink required" }, 400);
-    }
-    const track = { permlink, mediaType: "song" };
-    const qualities = ["320", "256"];
-    const entries = [];
-    for (const quality of qualities) {
-      const cached = await getCachedTelegramFile(env, track, quality);
-      entries.push({
-        quality,
-        key: getTelegramFileCacheKey(track, quality),
-        hit: Boolean(cached),
-        record: cached
-          ? {
-              fileId: cached.fileId,
-              title: cached.title || null,
-              sourceUrl: cached.sourceUrl || null,
-              cachedAt: cached.cachedAt || null,
-            }
-          : null,
-      });
-    }
-    return jsonResponse({
-      ok: true,
-      permlink,
-      hasFileCache: Boolean(getFileCacheStore(env)),
-      entries,
-    });
-  }
-
-  if (path === "/admin/api/cache/delete" && request.method === "POST") {
-    const body = await readJsonOrForm(request);
-    const permlink = body.permlink;
-    const quality = body.quality || "320";
-    if (!permlink) {
-      return jsonResponse({ ok: false, error: "permlink required" }, 400);
-    }
-    await deleteCachedTelegramFile(env, { permlink, mediaType: "song" }, String(quality));
-    if (!body.quality) {
-      await deleteCachedTelegramFile(env, { permlink, mediaType: "song" }, "256");
-    }
-    await recordAdminAudit(env, { action: "cache.delete", detail: permlink });
-    return jsonResponse({ ok: true, permlink, quality: body.quality || "320+256" });
   }
 
   return jsonResponse({ ok: false, error: "Not found" }, 404);
