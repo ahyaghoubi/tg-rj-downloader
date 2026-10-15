@@ -123,20 +123,6 @@ test("webhook accepts Telegram updates and schedules processing", async () => {
 
 test("internal routes reject missing or invalid job runner secret", async () => {
   const env = createEnv({ JOB_RUNNER_SECRET: "secret" });
-  const jobResponse = await worker.fetch(
-    new Request("https://worker.test/internal/run-artist-job?id=job-1", { method: "POST" }),
-    env,
-    createMockCtx()
-  );
-  const statelessResponse = await worker.fetch(
-    new Request("https://worker.test/internal/run-artist-stateless", {
-      method: "POST",
-      headers: { Authorization: "Bearer wrong" },
-      body: "{}",
-    }),
-    env,
-    createMockCtx()
-  );
   const warmResponse = await worker.fetch(
     new Request("https://worker.test/internal/warm-artist?chatId=1&artist=ebi", {
       method: "POST",
@@ -144,10 +130,14 @@ test("internal routes reject missing or invalid job runner secret", async () => 
     env,
     createMockCtx()
   );
+  const removedJob = await worker.fetch(
+    new Request("https://worker.test/internal/run-artist-job?id=job-1", { method: "POST" }),
+    env,
+    createMockCtx()
+  );
 
-  assert.equal(jobResponse.status, 403);
-  assert.equal(statelessResponse.status, 403);
   assert.equal(warmResponse.status, 403);
+  assert.equal(removedJob.status, 404);
 });
 
 test("internal warm-artist schedules missing-only cache warm", async () => {
@@ -199,42 +189,5 @@ test("internal warm-artist schedules missing-only cache warm", async () => {
     assert.equal(env.queueMessages[0].payload.originalTotal, 2);
   } finally {
     fetchMock.restore();
-  }
-});
-
-test("internal stateless route accepts valid secret and schedules fallback work", async () => {
-  const ctx = createMockCtx();
-  const telegram = mockFetch(() =>
-    new Response(JSON.stringify({ ok: true, result: { audio: { file_id: "id" } } }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    })
-  );
-
-  try {
-    const response = await worker.fetch(
-      new Request("https://worker.test/internal/run-artist-stateless", {
-        method: "POST",
-        headers: { Authorization: "Bearer secret" },
-        body: JSON.stringify({
-          chatId: "224032101",
-          artistName: "ebi",
-          tracks: [{ permlink: "Ebi-One", title: "One", mediaType: "song" }],
-          total: 1,
-          nextIndex: 0,
-          sent: 0,
-          failed: [],
-          sentTrackKeys: [],
-        }),
-      }),
-      createEnv({ JOB_RUNNER_SECRET: "secret" }),
-      ctx
-    );
-
-    assert.equal(response.status, 200);
-    assert.equal(ctx.promises.length, 1);
-    await ctx.flush();
-  } finally {
-    telegram.restore();
   }
 });

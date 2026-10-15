@@ -30,13 +30,12 @@ A Cloudflare Worker script that turns your Telegram bot into a Radio Javan media
   - Do **not** try to cache the entire Radio Javan catalog on the free tier.
   - Invalid cached IDs are removed automatically and the song is re-uploaded.
 
-- **Resumable Artist Delivery** _(optional, recommended)_  
+- **Queue-Only Artist Delivery** _(required for artist links)_  
   - Sends long artist catalogs through Cloudflare Queues, one song per queue message.
   - Each queue message enqueues the next one until every song is sent, avoiding per-song KV progress writes.
   - Serializes Queue deliveries per Telegram chat so a second artist waits instead of interleaving songs.
   - Routes messages that exhaust retries to a Dead Letter Queue and notifies the chat.
-  - Keeps the older KV/self-call runner as a fallback path while Queue delivery is the default.
-  - Limits and bulk cache behavior are configurable for the free Workers tier.
+  - Bulk cache behavior is configurable for the free Workers tier.
   - Handles Telegram `429` rate limits by reading `retry_after` and resuming later.
 
 - **Future-Proof Resolution**  
@@ -89,9 +88,9 @@ A Cloudflare Worker script that turns your Telegram bot into a Radio Javan media
    - Queue delivery is also globally serialized (`max_concurrency = 1`) and delayed between songs by default.
    - Exhausted retries go to `telegram-radiojavan-artist-delivery-dlq`, which notifies the chat and promotes any pending request.
    - Artist deliveries read from `TELEGRAM_FILE_CACHE`, but bulk artist cache writes are disabled by default to protect the free KV write quota.
-   - The older `ARTIST_JOB_STORE` + `WORKER_SELF` path remains available as a fallback while Queue mode is the default.
+   - `ARTIST_JOB_STORE` holds per-chat queue locks, cancel flags, recents, and long callback payloads (not legacy job documents).
 
-   If Queue bindings are **not** configured, the bot falls back to the older self-continuing path or direct artist audio delivery.
+   Artist links require the `ARTIST_QUEUE` binding. Without it, the bot reports a configuration error instead of falling back to a sync album send.
 
 ---
 
@@ -118,16 +117,16 @@ A Cloudflare Worker script that turns your Telegram bot into a Radio Javan media
 
    - Log in to your [Cloudflare dashboard](https://dash.cloudflare.com/).
    - Navigate to **Workers** and create a new Worker.
-   - Copy the contents of `worker.js` into the online editor.
+   - Deploy with Wrangler (`main = "src/index.js"` in `wrangler.toml`).
    - Set up environment variables and secrets:
      - `BOT_TOKEN` — your Telegram Bot Token (**required**, set as a Worker secret or variable)
-     - `JOB_RUNNER_SECRET` — shared secret that protects the internal job-runner endpoint (**required for resumable artist delivery**)
+     - `JOB_RUNNER_SECRET` — shared secret that protects `POST /internal/warm-artist` (**required for cache warm**)
      - `RJ_API_KEY` — Radio Javan API key (optional; defaults built in)
      - `RJ_USER_AGENT` — Radio Javan client user agent (optional; defaults built in)
    - Create and bind the KV namespaces and Queue (see [Cloudflare Bindings](#cloudflare-bindings)):
      - `TELEGRAM_FILE_CACHE` — optional but recommended; enables `file_id` reuse.
-     - `ARTIST_JOB_STORE` — optional fallback metadata for the older artist job runner.
-     - `ARTIST_QUEUE` — recommended; powers artist continuation without per-song KV progress writes.
+     - `ARTIST_JOB_STORE` — queue chat locks, cancel flags, recents, callbacks.
+     - `ARTIST_QUEUE` — **required** for artist catalog delivery.
 
    After deploying, open `https://<your-worker>.workers.dev/health` in a browser. You should see JSON with `"ok":true`, the bot username, queue/DLQ names, and ops hints.
 
@@ -162,7 +161,7 @@ A Cloudflare Worker script that turns your Telegram bot into a Radio Javan media
 
 ## Cloudflare Bindings
 
-The caching and artist delivery features use [Cloudflare KV](https://developers.cloudflare.com/kv/) and [Cloudflare Queues](https://developers.cloudflare.com/queues/). If Queue bindings are missing, the bot falls back to the older self-continuing path or direct artist audio delivery.
+Artist delivery uses [Cloudflare Queues](https://developers.cloudflare.com/queues/) plus [Cloudflare KV](https://developers.cloudflare.com/kv/) for chat locks and Telegram `file_id` cache. There is no legacy KV job / self-call fallback.
 
 1. **Create the KV namespaces and Queue**
 
@@ -177,19 +176,15 @@ The caching and artist delivery features use [Cloudflare KV](https://developers.
 2. **Add the bindings to `wrangler.toml`** (paste the KV IDs returned above)
 
    ```toml
+   main = "src/index.js"
+
    [[kv_namespaces]]
    binding = "TELEGRAM_FILE_CACHE"
    id = "<production-kv-namespace-id>"
-   preview_id = "<preview-kv-namespace-id>"
 
    [[kv_namespaces]]
    binding = "ARTIST_JOB_STORE"
    id = "<production-artist-job-kv-namespace-id>"
-   preview_id = "<preview-artist-job-kv-namespace-id>"
-
-   [[services]]
-   binding = "WORKER_SELF"
-   service = "telegram-radiojavan"
 
    [[queues.producers]]
    binding = "ARTIST_QUEUE"
@@ -211,46 +206,28 @@ The caching and artist delivery features use [Cloudflare KV](https://developers.
    max_concurrency = 1
 
    [vars]
-   ARTIST_DELIVERY_MODE = "queue"
    ENABLE_BULK_CACHE_WRITES = "false"
-   MAX_ACTIVE_ARTIST_JOBS = "1"
    ARTIST_QUEUE_DELAY_SECONDS = "2"
    MAX_AUDIO_URL_ATTEMPTS = "3"
+   ARTIST_PROGRESS_EVERY = "5"
    ```
 
-3. **Set the job-runner secret**
+3. **Set secrets**
 
    ```sh
+   npx wrangler secret put BOT_TOKEN
    npx wrangler secret put JOB_RUNNER_SECRET
-   ```
-
-4. **Enable the watchdog cron** (resumes stuck jobs and promotes queued ones)
-
-   ```toml
-   [triggers]
-   crons = ["* * * * *"]
    ```
 
 **Notes**
 
 - `TELEGRAM_FILE_CACHE` reuse only works for the same bot that uploaded the file. Cache entries are quality-specific (`320` vs `256`) and keyed by lowercase permlink.
-- Queue mode is the recommended artist delivery path because it avoids per-song KV progress writes.
 - `max_concurrency = 1` and `ARTIST_QUEUE_DELAY_SECONDS=2` are recommended on the free tier to absorb bursts safely.
 - Per-chat Queue locks use a couple of short-lived `ARTIST_JOB_STORE` keys so concurrent artist requests for one chat do not interleave.
 - Configure `dead_letter_queue` so stalled artist messages remain inspectable and the chat is notified instead of silently dropping.
-- Inspect queue/DLQ consumers with `bash scripts/check-dlq.sh` (or `npx wrangler queues consumer list ...`) and watch live logs with `npx wrangler tail`.
+- Inspect queue/DLQ consumers with `bash scripts/check-dlq.sh` and watch live logs with `npx wrangler tail`.
 - `ENABLE_BULK_CACHE_WRITES=false` is recommended on the free tier. Artist deliveries still read existing cached `file_id`s, but they do not write hundreds of new cache entries.
-- To warm only missing songs for one artist (and write cache for those), call `POST /internal/warm-artist` with `JOB_RUNNER_SECRET` (see the script output for a curl example). Stay within ~1,000 KV writes/day.
-- `ARTIST_JOB_STORE` and `WORKER_SELF` are retained as fallback support for the older self-continuing artist runner.
-
-### Optional Cleanup For Old Artist Job Records
-
-After Queue mode is deployed and stable, old completed `artist-job:*` records can be removed manually from `ARTIST_JOB_STORE` if you want to reduce clutter:
-
-```sh
-npx wrangler kv key list --binding ARTIST_JOB_STORE --remote
-npx wrangler kv key delete "<key-name>" --binding ARTIST_JOB_STORE --remote
-```
+- To warm only missing songs for one artist (and write cache for those), call `POST /internal/warm-artist` with `JOB_RUNNER_SECRET`. Stay within ~1,000 KV writes/day.
 
 Do not bulk-delete `TELEGRAM_FILE_CACHE` unless you intentionally want songs to be uploaded again.
 
@@ -259,8 +236,8 @@ Do not bulk-delete `TELEGRAM_FILE_CACHE` unless you intentionally want songs to 
 ## Troubleshooting
 
 - **Bot does not respond** — Check `getWebhookInfo` points to `/webhook` on your worker, and that `BOT_TOKEN` is set in Cloudflare **Settings → Variables**. The worker returns `200 OK` immediately and processes updates in the background via `ctx.waitUntil`.
-- **Artist delivery stops partway** — Confirm `ARTIST_QUEUE` is configured and the Queue consumer is deployed. Run `bash scripts/check-dlq.sh` and watch `wrangler tail` for `Artist delivery DLQ` messages. If Queue mode is unavailable, confirm `ARTIST_JOB_STORE`, `WORKER_SELF`, and `JOB_RUNNER_SECRET` are set for fallback delivery.
-- **Artist delivery never starts** — Check `ARTIST_DELIVERY_MODE`, the `ARTIST_QUEUE` binding, and Wrangler deployment output for Queue consumer errors.
+- **Artist delivery stops partway** — Confirm `ARTIST_QUEUE` is configured and the Queue consumer is deployed. Run `bash scripts/check-dlq.sh` and watch `wrangler tail` for `Artist delivery DLQ` messages.
+- **Artist delivery never starts** — Confirm the `ARTIST_QUEUE` binding and Wrangler deployment output for Queue consumer errors.
 - **Songs re-upload every time** — Bind `TELEGRAM_FILE_CACHE` so the bot can store and reuse Telegram `file_id`s. Keys are lowercase; legacy casing duplicates are migrated on read.
 - **Daily Workers KV put limit exceeded** — Queue mode avoids per-song KV progress writes. Keep `ENABLE_BULK_CACHE_WRITES=false` for normal artist sends. Use `/internal/warm-artist` only for shortlists. Single-song / warm cache writes may fail until Cloudflare resets the daily quota (~1,000 puts/day on free).
 - **403 on artist API** — Ensure `RJ_API_KEY` and `RJ_USER_AGENT` are set, or redeploy with the built-in defaults.
@@ -290,33 +267,39 @@ Current coverage includes:
 - Telegram `file_id` cache hits, lowercase cache keys with legacy migration, rejected cache cleanup, upload caching, disabled bulk cache writes, dead-host skipping, uncached-track filtering, and KV quota handling.
 - Queue artist delivery payload compaction, one-song continuation, delayed requeueing, completion summaries, failed-track continuation, duplicate skips, retry behavior, per-chat serialization, warm-missing-only jobs, and DLQ handling.
 - Simulated 12-artist stress behavior without real network calls.
-- Worker routes for health, direct GET, webhook, and guarded internal endpoints.
-- Legacy KV/stateless fallback and watchdog behavior.
+- Worker routes for health, direct GET, webhook, and guarded `/internal/warm-artist`.
 
 ---
 
 ## File Structure
 
-- **README.md**: This file.
-- **wrangler.toml**: Worker configuration, including KV namespace bindings, Queue bindings, feature flags, service binding, and the watchdog cron trigger.
-- **worker.js**: The main Cloudflare Worker script responsible for:
-  - Handling incoming Telegram updates via webhooks.
-  - Resolving media URLs from Radio Javan.
-  - Caching and reusing Telegram `file_id`s for already-uploaded songs.
-  - Delivering artist catalogs through Cloudflare Queues, with fallback support for the older persisted job runner.
-  - Fetching and sending media files using Telegram's APIs.
+```
+src/
+  index.js              # Worker entry (fetch / queue)
+  config.js             # env helpers and constants
+  messages/fa.js        # Farsi user-facing strings
+  routes/http.js        # HTTP routing
+  bot/                  # commands, search, inline, callbacks, handleUrl
+  rj/                   # Radio Javan API + URL/track helpers
+  telegram/             # Bot API + sendTrackToUser
+  cache/                # Telegram file_id KV cache
+  delivery/             # Queue, DLQ, warm-artist
+worker.js               # thin re-export of src/index.js for tests
+wrangler.toml           # bindings and vars (main = src/index.js)
+test/                   # node:test suite
+```
 
 ---
 
 ## What's New
 
-- **Telegram upload cache**: songs already uploaded by the bot are resent by `file_id` instead of being re-downloaded and re-uploaded. Cache is keyed per song and per quality (`320`/`256`) via the optional `TELEGRAM_FILE_CACHE` KV namespace.
+- **Modular `src/` layout** with queue-only artist delivery (legacy KV jobs, watchdog, and `WORKER_SELF` removed).
+- **Telegram upload cache**: songs already uploaded by the bot are resent by `file_id`. Cache is keyed per song and per quality (`320`/`256`).
 - **Deterministic quality**: 320 kbps is always preferred, with 256 kbps as the only fallback.
-- **Queue-backed artist delivery**: long artist catalogs are sent through Cloudflare Queues one song at a time, avoiding per-song KV progress writes.
-- **Automatic queueing & limits**: one active job per chat (plus one queued) and 5 active jobs globally; additional requests are queued and promoted automatically — no user commands required.
-- **Rate-limit aware**: Telegram `429` responses are honored via `retry_after`, with progress saved immediately and resumed later.
-- **Watchdog**: a scheduled cron handler backs up the self-continuation path by resuming stuck jobs and promoting queued ones.
-- **New endpoint**: `POST /internal/run-artist-job?id=<jobId>`, protected by the `JOB_RUNNER_SECRET` secret.
+- **Queue-backed artist delivery**: long artist catalogs are sent through Cloudflare Queues one song at a time.
+- **Per-chat serialization**: a second artist for the same chat waits until the current delivery finishes (or DLQs).
+- **Rate-limit aware**: Telegram `429` responses are honored via `retry_after`.
+- **Warm endpoint**: `POST /internal/warm-artist`, protected by `JOB_RUNNER_SECRET`.
 
 ---
 

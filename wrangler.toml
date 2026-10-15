@@ -1,5 +1,5 @@
 name = "telegram-radiojavan"
-main = "worker.js"
+main = "src/index.js"
 compatibility_date = "2024-01-01"
 
 # Required secrets (set before deploying):
@@ -16,16 +16,11 @@ compatibility_date = "2024-01-01"
 binding = "TELEGRAM_FILE_CACHE"
 id = "62022af1fd724b10a4d6921c84f0e99d"
 
-# Resumable artist delivery jobs. Required for batched artist delivery.
+# Queue chat locks, cancel flags, recents, and callback spill.
 # Create with: npx wrangler kv namespace create ARTIST_JOB_STORE
 [[kv_namespaces]]
 binding = "ARTIST_JOB_STORE"
 id = "1302c1b36a434ec6bb93a89f540232da"
-
-# Internal self-call binding used to continue artist batches smoothly.
-[[services]]
-binding = "WORKER_SELF"
-service = "telegram-radiojavan"
 
 [[queues.producers]]
 binding = "ARTIST_QUEUE"
@@ -48,14 +43,8 @@ max_retries = 1
 max_concurrency = 1
 
 [vars]
-ARTIST_DELIVERY_MODE = "queue"
 ENABLE_BULK_CACHE_WRITES = "false"
-MAX_ACTIVE_ARTIST_JOBS = "1"
 ARTIST_QUEUE_DELAY_SECONDS = "2"
 MAX_AUDIO_URL_ATTEMPTS = "3"
 ARTIST_PROGRESS_EVERY = "5"
 ADMIN_USER_IDS = "224032101"
-
-# Watchdog that resumes stuck artist jobs and promotes queued ones.
-[triggers]
-crons = ["* * * * *"]

@@ -80,7 +80,6 @@ export function createEnv(overrides = {}) {
   const artistQueue = createMockQueue();
   return {
     BOT_TOKEN: "test-token",
-    ARTIST_DELIVERY_MODE: "queue",
     ARTIST_QUEUE_DELAY_SECONDS: "2",
     ENABLE_BULK_CACHE_WRITES: "false",
     ARTIST_QUEUE: artistQueue,

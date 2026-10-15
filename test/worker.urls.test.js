@@ -41,6 +41,14 @@ test("parseMediaFromUrl and extractArtistName parse expected URL shapes", () => 
     mediaName: "Ebi-Test",
   });
   assert.equal(extractArtistName("https://play.radiojavan.com/artist/ebi"), "ebi");
+  assert.equal(
+    extractArtistName("https://play.radiojavan.com/artist/Kamran%20%26%20Hooman"),
+    "Kamran & Hooman"
+  );
+  assert.equal(
+    extractArtistName("https://play.radiojavan.com/artist/Kamran%20&%20Hooman"),
+    "Kamran & Hooman"
+  );
   assert.throws(() => parseMediaFromUrl("https://play.radiojavan.com/song"), /Invalid URL format/);
 });
 
