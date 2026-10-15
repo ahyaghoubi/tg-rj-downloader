@@ -397,6 +397,131 @@ test("wipe user clears profile and recents", async () => {
   assert.equal((await readUserRecents(env, "77")).length, 0);
 });
 
+test("admin resolve and promote-pending endpoints work", async () => {
+  const env = adminEnv();
+  const cookie = await sessionCookie(env);
+  const resolve = await worker.fetch(
+    new Request("https://worker.test/admin/api/resolve", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://play.radiojavan.com/song/Ebi-One" }),
+    }),
+    env,
+    createMockCtx()
+  );
+  const resolved = await resolve.json();
+  assert.equal(resolved.mediaType, "song");
+  assert.equal(resolved.mediaName, "Ebi-One");
+
+  env.ARTIST_JOB_STORE.store.set(
+    "artist-queue-pending:v1:224032101",
+    JSON.stringify({
+      chatId: "224032101",
+      artistName: "Ebi",
+      tracks: [{ permlink: "Ebi-One", title: "One", mediaType: "song" }],
+      total: 1,
+    })
+  );
+  const telegramCalls = [];
+  const fetchMock = mockFetch(({ url, init }) => {
+    if (url.startsWith("https://api.telegram.org/")) {
+      telegramCalls.push(init?.body || "");
+      return new Response(JSON.stringify({ ok: true, result: {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  try {
+    const promote = await worker.fetch(
+      new Request("https://worker.test/admin/api/chat/promote-pending", {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId: "224032101" }),
+      }),
+      env,
+      createMockCtx()
+    );
+    assert.equal(promote.status, 200);
+    const body = await promote.json();
+    assert.equal(body.promoted, "Ebi");
+    assert.equal(env.ARTIST_QUEUE.messages.length > 0, true);
+  } finally {
+    fetchMock.restore();
+  }
+});
+
+test("admin search and send-artist and export work", async () => {
+  const env = adminEnv();
+  const cookie = await sessionCookie(env);
+  const fetchMock = mockFetch(({ url }) => {
+    if (url.includes("/api/p/search") || url.includes("/search")) {
+      return new Response(
+        JSON.stringify({
+          artists: [{ name: "Ebi", query: "Ebi" }],
+          mp3s: [{ permlink: "Ebi-One", title: "One", artist: "Ebi", link: "https://cdn.example/a.mp3" }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (url.includes("/api/p/artist") || url.includes("/artist")) {
+      return new Response(
+        JSON.stringify({
+          artist: { query: "Ebi", name: "Ebi" },
+          mp3s: [
+            { permlink: "Ebi-One", title: "One", artist: "Ebi", created_at: "2024-01-02", link: "https://cdn.example/a.mp3" },
+            { permlink: "Ebi-Two", title: "Two", artist: "Ebi", created_at: "2024-01-01", link: "https://cdn.example/b.mp3" },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (url.startsWith("https://api.telegram.org/")) {
+      return new Response(JSON.stringify({ ok: true, result: {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  try {
+    const search = await worker.fetch(
+      new Request("https://worker.test/admin/api/search?q=ebi", { headers: { Cookie: cookie } }),
+      env,
+      createMockCtx()
+    );
+    const searchBody = await search.json();
+    assert.equal(search.status, 200);
+    assert.ok(searchBody.artists.length >= 1);
+
+    const ctx = createMockCtx();
+    const send = await worker.fetch(
+      new Request("https://worker.test/admin/api/send-artist", {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId: "224032101", artistName: "Ebi", limit: 1 }),
+      }),
+      env,
+      ctx
+    );
+    assert.equal(send.status, 200);
+    const sendBody = await send.json();
+    assert.equal(sendBody.trackCount, 1);
+    await ctx.flush();
+
+    const exp = await worker.fetch(
+      new Request("https://worker.test/admin/api/export?kind=errors", { headers: { Cookie: cookie } }),
+      env,
+      createMockCtx()
+    );
+    assert.equal(exp.status, 200);
+    assert.match(exp.headers.get("Content-Disposition") || "", /admin-errors\.json/);
+  } finally {
+    fetchMock.restore();
+  }
+});
+
 test("admin force-send and deep-link endpoints work", async () => {
   const env = adminEnv({ BOT_USERNAME: "rjdlbot" });
   const bodies = [];

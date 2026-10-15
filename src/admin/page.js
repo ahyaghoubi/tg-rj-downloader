@@ -142,6 +142,7 @@ function renderAdminPage() {
         <button type="button" id="btnLoadChat">بارگذاری</button>
         <button type="button" class="danger" id="btnCancel">لغو فعال</button>
         <button type="button" class="secondary" id="btnClearPending">پاک کردن pending</button>
+        <button type="button" id="btnPromotePending">شروع pending الان</button>
       </div>
       <pre id="jobOut" class="muted">chatId را وارد کنید یا از جدول کاربران انتخاب کنید.</pre>
     </section>
@@ -179,13 +180,43 @@ function renderAdminPage() {
         <button type="button" id="btnForceSend">ارسال آهنگ</button>
       </div>
       <div class="row">
+        <label>artist</label>
+        <input id="sendArtist" placeholder="Chaartaar" style="min-width:160px" />
+        <label>limit</label>
+        <input id="sendArtistLimit" type="number" min="1" max="500" placeholder="10 یا خالی=همه" style="min-width:120px" />
+        <button type="button" id="btnForceArtist">ارسال هنرمند</button>
+      </div>
+      <div class="row">
         <label>type</label>
         <select id="deepType"><option value="s">song</option><option value="a">artist</option><option value="p">playlist</option><option value="b">album</option></select>
         <label>value</label>
         <input id="deepValue" placeholder="Chaartaar-Gele-Kon" style="min-width:200px" />
         <button type="button" class="secondary" id="btnDeepLink">ساخت لینک</button>
+        <button type="button" class="secondary" id="btnTestAdmin">پیام تست به ادمین</button>
       </div>
       <pre id="toolsOut" class="muted"></pre>
+    </section>
+
+    <section>
+      <h2>ابزار محتوا (resolve / preview / search)</h2>
+      <div class="row">
+        <label>URL</label>
+        <input id="resolveUrl" placeholder="https://play.radiojavan.com/song/..." style="min-width:280px;flex:1" />
+        <button type="button" id="btnResolve">Resolve</button>
+      </div>
+      <div class="row">
+        <label>type</label>
+        <select id="previewType"><option value="artist">artist</option><option value="playlist">playlist</option><option value="album">album</option></select>
+        <label>value</label>
+        <input id="previewValue" placeholder="Chaartaar" style="min-width:180px" />
+        <button type="button" id="btnPreview">Preview</button>
+      </div>
+      <div class="row">
+        <label>search</label>
+        <input id="adminSearch" placeholder="ebi" style="min-width:180px" />
+        <button type="button" id="btnAdminSearch">جستجو</button>
+      </div>
+      <pre id="contentOut" class="muted"></pre>
     </section>
 
     <section>
@@ -194,6 +225,8 @@ function renderAdminPage() {
         <button type="button" id="btnLoadDlq">DLQ</button>
         <button type="button" class="secondary" id="btnLoadErrors">خطاها</button>
         <button type="button" class="secondary" id="btnLoadAudit">Audit</button>
+        <a class="muted" id="exportErrors" href="/admin/api/export?kind=errors" style="margin-inline-start:auto;font-size:.85rem">Export errors</a>
+        <a class="muted" id="exportDlq" href="/admin/api/export?kind=dlq" style="font-size:.85rem">Export DLQ</a>
       </div>
       <pre id="dlqOut" class="muted"></pre>
     </section>
@@ -354,6 +387,13 @@ function renderAdminPage() {
         await loadChat();
       } catch (e) { $("jobOut").textContent = e.message; }
     };
+    $("btnPromotePending").onclick = async () => {
+      try {
+        const data = await api("/admin/api/chat/promote-pending", { method: "POST", body: JSON.stringify({ chatId: $("jobChatId").value.trim() }) });
+        $("jobOut").textContent = JSON.stringify(data, null, 2);
+        await loadChat();
+      } catch (e) { $("jobOut").textContent = e.message; }
+    };
     $("btnWarm").onclick = async () => {
       try {
         const data = await api("/admin/api/warm", { method: "POST", body: JSON.stringify({ chatId: $("warmChatId").value.trim(), artistName: $("warmArtist").value.trim() }) });
@@ -400,6 +440,20 @@ function renderAdminPage() {
         $("toolsOut").textContent = JSON.stringify(data, null, 2);
       } catch (e) { $("toolsOut").textContent = e.message; }
     };
+    $("btnForceArtist").onclick = async () => {
+      try {
+        const limitRaw = $("sendArtistLimit").value.trim();
+        const data = await api("/admin/api/send-artist", {
+          method: "POST",
+          body: JSON.stringify({
+            chatId: $("sendChatId").value.trim() || $("jobChatId").value.trim(),
+            artistName: $("sendArtist").value.trim(),
+            limit: limitRaw === "" ? null : Number(limitRaw),
+          }),
+        });
+        $("toolsOut").textContent = JSON.stringify(data, null, 2);
+      } catch (e) { $("toolsOut").textContent = e.message; }
+    };
     $("btnDeepLink").onclick = async () => {
       try {
         const data = await api("/admin/api/deep-link", {
@@ -408,6 +462,47 @@ function renderAdminPage() {
         });
         $("toolsOut").textContent = JSON.stringify(data, null, 2);
       } catch (e) { $("toolsOut").textContent = e.message; }
+    };
+    $("btnTestAdmin").onclick = async () => {
+      try {
+        const data = await api("/admin/api/test-message", { method: "POST", body: "{}" });
+        $("toolsOut").textContent = JSON.stringify(data, null, 2);
+      } catch (e) { $("toolsOut").textContent = e.message; }
+    };
+    $("btnResolve").onclick = async () => {
+      try {
+        const data = await api("/admin/api/resolve", {
+          method: "POST",
+          body: JSON.stringify({ url: $("resolveUrl").value.trim() }),
+        });
+        $("contentOut").textContent = JSON.stringify(data, null, 2);
+        if (data.mediaName) {
+          $("previewValue").value = data.mediaName;
+          if (data.mediaType === "playlist") $("previewType").value = "playlist";
+          else if (data.mediaType === "album") $("previewType").value = "album";
+          else if (data.mediaType === "artist") $("previewType").value = "artist";
+          if (data.mediaType === "song") {
+            $("sendPermlink").value = data.mediaName;
+            $("deepValue").value = data.mediaName;
+          }
+        }
+      } catch (e) { $("contentOut").textContent = e.message; }
+    };
+    $("btnPreview").onclick = async () => {
+      try {
+        const data = await api("/admin/api/preview", {
+          method: "POST",
+          body: JSON.stringify({ type: $("previewType").value, value: $("previewValue").value.trim() }),
+        });
+        $("contentOut").textContent = JSON.stringify(data, null, 2);
+      } catch (e) { $("contentOut").textContent = e.message; }
+    };
+    $("btnAdminSearch").onclick = async () => {
+      try {
+        const q = $("adminSearch").value.trim();
+        const data = await api("/admin/api/search?q=" + encodeURIComponent(q));
+        $("contentOut").textContent = JSON.stringify(data, null, 2);
+      } catch (e) { $("contentOut").textContent = e.message; }
     };
     $("btnLoadUser").onclick = async () => {
       try { $("jobChatId").value = $("userChatId").value.trim(); await loadChat(); }
@@ -496,6 +591,11 @@ function renderAdminPage() {
       } catch (e) { $("msgOut").textContent = e.message; }
     };
     Promise.all([loadOverview(), loadUsers(false)]).catch((e) => { $("headerStatus").textContent = e.message; });
+    setInterval(() => { loadOverview().catch(() => {}); }, 10000);
+    document.addEventListener("keydown", (ev) => {
+      if (ev.target && /^(INPUT|TEXTAREA|SELECT)$/i.test(ev.target.tagName)) return;
+      if (ev.key === "r") loadOverview().catch(() => {});
+    });
   </script>
 </body>
 </html>`;
