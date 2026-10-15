@@ -1,7 +1,7 @@
 import {
   QUEUE_CHAT_ACTIVE_TTL_S,
   getBotToken,
-  getArtistQueueDelaySeconds,
+  resolveArtistQueueDelaySeconds,
   getArtistProgressEvery,
   getJobStore,
   putKv,
@@ -369,15 +369,13 @@ async function runQueuedArtistMessage(env, body) {
     return;
   }
 
-  const delaySeconds = Math.max(
-    getArtistQueueDelaySeconds(env) + Number(payload.rateLimitBoost || 0),
-    getArtistQueueDelaySeconds(env)
-  );
+  const delaySeconds = resolveArtistQueueDelaySeconds(env, payload);
   await enqueueArtistQueueMessage(env, payload, { delaySeconds });
   console.log(
     `Queue artist delivery ${payload.artistName}: enqueued index ${
       payload.nextIndex + 1
-    }/${payload.total} after ${delaySeconds}s`
+    }/${payload.total} after ${delaySeconds}s` +
+      (payload.rateLimitBoost ? ` (boost=${payload.rateLimitBoost})` : "")
   );
 }
 

@@ -1,4 +1,4 @@
-import { getBotToken, getArtistQueueDelaySeconds } from "../config.js";
+import { getBotToken, resolveArtistQueueDelaySeconds } from "../config.js";
 import { sendMessage } from "../telegram/send.js";
 import { recordDlqEvent } from "../admin/dlq-log.js";
 import {
@@ -20,9 +20,11 @@ async function handleArtistDeliveryDlq(env, body) {
   // Auto-retry once from DLQ, then give up and notify.
   if (retryCount < 1 && payload.chatId && Array.isArray(payload.tracks) && payload.nextIndex < payload.total) {
     payload.dlqRetryCount = retryCount + 1;
-    payload.rateLimitBoost = Math.min((payload.rateLimitBoost || 0) + 5, 30);
     try {
-      const delaySeconds = Math.max(getArtistQueueDelaySeconds(env) + (payload.rateLimitBoost || 0), 5);
+      const delaySeconds = Math.max(
+        resolveArtistQueueDelaySeconds(env, payload, { rateLimited: true, retryAfter: 5 }),
+        5
+      );
       await enqueueArtistQueueMessage(env, payload, { delaySeconds });
       await recordDlqEvent(env, payload, { retryCount, autoRetried: true });
       await sendMessage(

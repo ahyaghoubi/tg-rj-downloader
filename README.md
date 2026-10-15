@@ -207,7 +207,7 @@ Artist delivery uses [Cloudflare Queues](https://developers.cloudflare.com/queue
    max_concurrency = 1
 
    [vars]
-   ARTIST_QUEUE_DELAY_SECONDS = "2"
+   ARTIST_QUEUE_DELAY_SECONDS = "1"
    MAX_AUDIO_URL_ATTEMPTS = "3"
    ARTIST_PROGRESS_EVERY = "5"
    ```
@@ -227,7 +227,7 @@ Artist delivery uses [Cloudflare Queues](https://developers.cloudflare.com/queue
 **Notes**
 
 - `TELEGRAM_FILE_CACHE` reuse only works for the same bot that uploaded the file. Cache entries are quality-specific (`320` vs `256`) and keyed by lowercase permlink.
-- `max_concurrency = 1` and `ARTIST_QUEUE_DELAY_SECONDS=2` are recommended on the free tier to absorb bursts safely.
+- `max_concurrency = 1` and `ARTIST_QUEUE_DELAY_SECONDS=1` (base gap) are recommended. Delay is adaptive: it rises after Telegram `429` and decays back toward the base after clean sends. Use `0` for maximum speed when traffic is light.
 - Per-chat Queue locks use a couple of short-lived `ARTIST_JOB_STORE` keys so concurrent artist requests for one chat do not interleave.
 - Configure `dead_letter_queue` so stalled artist messages remain inspectable and the chat is notified instead of silently dropping.
 - Inspect queue/DLQ consumers with `bash scripts/check-dlq.sh` and watch live logs with `npx wrangler tail`.

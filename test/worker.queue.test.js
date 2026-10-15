@@ -280,9 +280,33 @@ test("Worker queue handler retries generic message failures without delay option
 });
 
 test("getArtistQueueDelaySeconds has safe defaults and max clamp", () => {
-  assert.equal(getArtistQueueDelaySeconds({}), 2);
+  assert.equal(getArtistQueueDelaySeconds({}), 1);
+  assert.equal(getArtistQueueDelaySeconds({ ARTIST_QUEUE_DELAY_SECONDS: "0" }), 0);
   assert.equal(getArtistQueueDelaySeconds({ ARTIST_QUEUE_DELAY_SECONDS: "9" }), 9);
   assert.equal(getArtistQueueDelaySeconds({ ARTIST_QUEUE_DELAY_SECONDS: "999" }), 60);
+});
+
+test("resolveArtistQueueDelaySeconds adapts after rate limits and recovers", async () => {
+  const { resolveArtistQueueDelaySeconds } = await import("../src/config.js");
+  const env = { ARTIST_QUEUE_DELAY_SECONDS: "1" };
+  const payload = {};
+
+  assert.equal(resolveArtistQueueDelaySeconds(env, payload), 1);
+
+  const limited = resolveArtistQueueDelaySeconds(env, payload, {
+    rateLimited: true,
+    retryAfter: 11,
+  });
+  assert.equal(limited >= 11, true);
+  assert.equal(payload.rateLimitBoost >= 2, true);
+
+  const boosted = Number(payload.rateLimitBoost);
+  // First success keeps boost; second decays by 1
+  resolveArtistQueueDelaySeconds(env, payload);
+  assert.equal(payload.rateLimitBoost, boosted);
+  const afterDecay = resolveArtistQueueDelaySeconds(env, payload);
+  assert.equal(payload.rateLimitBoost, boosted - 1);
+  assert.equal(afterDecay, 1 + (boosted - 1));
 });
 
 test("enqueueArtistQueueDelivery serializes a second artist for the same chat", async () => {

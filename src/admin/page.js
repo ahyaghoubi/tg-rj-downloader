@@ -360,7 +360,7 @@ function renderAdminPage() {
 
     <section>
       <h2>Runtime settings</h2>
-      <p class="section-desc">Stored in KV — no redeploy needed. Allowlist and VIP are separate flags.</p>
+      <p class="section-desc">Stored in KV — no redeploy needed. Queue delay is a base gap; the bot speeds up after clean sends and slows only after Telegram rate limits. Allowlist and VIP are separate flags.</p>
       <div class="row actions">
         <button type="button" id="btnAllowlistOn">Allowlist on</button>
         <button type="button" class="secondary" id="btnAllowlistOff">Allowlist off</button>
@@ -368,7 +368,7 @@ function renderAdminPage() {
         <button type="button" class="secondary" id="btnQueueResume">Resume queue</button>
       </div>
       <div class="row">
-        <div class="field"><label for="cfgDelay">Delay (s)</label><input id="cfgDelay" type="number" min="1" max="60" /></div>
+        <div class="field"><label for="cfgDelay">Base delay (s)</label><input id="cfgDelay" type="number" min="0" max="60" /></div>
         <div class="field"><label for="cfgProgress">Progress every</label><input id="cfgProgress" type="number" min="1" max="50" /></div>
         <div class="field"><label for="cfgAttempts">Max URL attempts</label><input id="cfgAttempts" type="number" min="1" max="8" /></div>
         <div class="field"><label for="cfgDailyLimit">Daily limit</label><input id="cfgDailyLimit" type="number" min="0" max="5000" /></div>
@@ -510,7 +510,7 @@ function renderAdminPage() {
         ["Webhook last error", data.webhook?.lastErrorMessage || "(none)"],
         ["Queue", c.artistQueue],
         ["DLQ", c.artistDlq],
-        ["Queue delay", c.queueDelaySeconds + "s"],
+        ["Base queue delay", c.queueDelaySeconds + "s"],
         ["Progress every", String(c.progressEvery)],
         ["Admin IDs", (c.adminUserIds || []).join(", ") || "(none)"],
         ["Daily download limit", String(c.defaultDailyDownloadLimit)],

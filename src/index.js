@@ -1,8 +1,4 @@
-import {
-  ARTIST_DELIVERY_DLQ_NAME,
-  RATE_LIMIT_FALLBACK_SECONDS,
-  getArtistQueueDelaySeconds,
-} from "./config.js";
+import { ARTIST_DELIVERY_DLQ_NAME, resolveArtistQueueDelaySeconds } from "./config.js";
 import { handleHttpRequest } from "./routes/http.js";
 import {
   enqueueArtistQueueMessage,
@@ -60,18 +56,12 @@ const worker = {
       } catch (err) {
         if (err instanceof TelegramRateLimitError) {
           const payload = normalizeQueuePayload(message.body) || {};
-          const boost = Math.min(
-            Number(payload.rateLimitBoost || 0) + Math.max(2, Math.ceil((err.retryAfter || 5) / 2)),
-            30
-          );
-          payload.rateLimitBoost = boost;
-          const delaySeconds = Math.max(
-            err.retryAfter || RATE_LIMIT_FALLBACK_SECONDS,
-            getArtistQueueDelaySeconds(env) + boost,
-            1
-          );
+          const delaySeconds = resolveArtistQueueDelaySeconds(env, payload, {
+            rateLimited: true,
+            retryAfter: err.retryAfter,
+          });
           console.warn(
-            `Queue artist delivery rate limited; requeue with boost=${boost} delay=${delaySeconds}s`
+            `Queue artist delivery rate limited; requeue with boost=${payload.rateLimitBoost} delay=${delaySeconds}s`
           );
           try {
             await enqueueArtistQueueMessage(env, payload, { delaySeconds });

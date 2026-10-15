@@ -138,9 +138,49 @@ function getEnvNumber(env, key, fallback) {
 function getArtistQueueDelaySeconds(env) {
   const runtime = getRuntimeConfigCache(env);
   if (runtime?.artistQueueDelaySeconds != null) {
-    return Math.min(Math.max(1, Number(runtime.artistQueueDelaySeconds) || 1), 60);
+    const n = Number(runtime.artistQueueDelaySeconds);
+    return Math.min(Math.max(0, Number.isFinite(n) ? n : 0), 60);
   }
-  return Math.min(getEnvNumber(env, "ARTIST_QUEUE_DELAY_SECONDS", 2), 60);
+  const raw = env?.ARTIST_QUEUE_DELAY_SECONDS;
+  if (raw === 0 || raw === "0") {
+    return 0;
+  }
+  // Default 1s — adaptive boost still slows down after Telegram 429s.
+  return Math.min(getEnvNumber(env, "ARTIST_QUEUE_DELAY_SECONDS", 1), 60);
+}
+
+/**
+ * Adaptive per-song queue delay.
+ * - Healthy path: base delay only; gradually decay any prior rate-limit boost.
+ * - After Telegram 429: respect retry_after and raise a temporary boost.
+ */
+function resolveArtistQueueDelaySeconds(
+  env,
+  payload = {},
+  { rateLimited = false, retryAfter = 0 } = {}
+) {
+  const base = getArtistQueueDelaySeconds(env);
+
+  if (rateLimited) {
+    const bump = Math.max(2, Math.ceil((retryAfter || RATE_LIMIT_FALLBACK_SECONDS) / 2));
+    const boost = Math.min(Number(payload.rateLimitBoost || 0) + bump, 30);
+    payload.rateLimitBoost = boost;
+    payload.successStreak = 0;
+    return Math.max(retryAfter || RATE_LIMIT_FALLBACK_SECONDS, base + boost, 1);
+  }
+
+  let boost = Math.max(0, Number(payload.rateLimitBoost || 0));
+  const streak = Math.max(0, Number(payload.successStreak || 0)) + 1;
+  payload.successStreak = streak;
+
+  // After two clean sends, ease off the boost so pacing recovers toward base.
+  if (boost > 0 && streak >= 2) {
+    boost = Math.max(0, boost - 1);
+    payload.rateLimitBoost = boost;
+    payload.successStreak = 0;
+  }
+
+  return Math.max(0, Math.min(base + boost, 60));
 }
 
 function getMaxAudioUrlAttempts(env) {
@@ -274,6 +314,7 @@ export {
   getEnvBoolean,
   getEnvNumber,
   getArtistQueueDelaySeconds,
+  resolveArtistQueueDelaySeconds,
   getMaxAudioUrlAttempts,
   getArtistProgressEvery,
   getAdminUserIds,
