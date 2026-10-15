@@ -129,9 +129,27 @@ export default {
         message.ack();
       } catch (err) {
         if (err instanceof TelegramRateLimitError) {
-          const delaySeconds = Math.max(err.retryAfter || RATE_LIMIT_FALLBACK_SECONDS, 1);
-          console.warn(`Queue artist delivery rate limited; retrying in ${delaySeconds}s`);
-          message.retry({ delaySeconds });
+          const payload = normalizeQueuePayload(message.body) || {};
+          const boost = Math.min(
+            Number(payload.rateLimitBoost || 0) + Math.max(2, Math.ceil((err.retryAfter || 5) / 2)),
+            30
+          );
+          payload.rateLimitBoost = boost;
+          const delaySeconds = Math.max(
+            err.retryAfter || RATE_LIMIT_FALLBACK_SECONDS,
+            getArtistQueueDelaySeconds(env) + boost,
+            1
+          );
+          console.warn(
+            `Queue artist delivery rate limited; requeue with boost=${boost} delay=${delaySeconds}s`
+          );
+          try {
+            await enqueueArtistQueueMessage(env, payload, { delaySeconds });
+            message.ack();
+          } catch (enqueueErr) {
+            console.warn(`Rate-limit requeue failed: ${enqueueErr.message}`);
+            message.retry({ delaySeconds });
+          }
           continue;
         }
 
@@ -284,6 +302,9 @@ const FILE_CACHE_PREFIX = "telegram-file:v1";
 const JOB_PREFIX = "artist-job:v1";
 const CHAT_ACTIVE_PREFIX = "artist-job-active:v1";
 const CHAT_QUEUED_PREFIX = "artist-job-queued:v1";
+const QUEUE_CHAT_CANCEL_PREFIX = "artist-queue-cancel:v1";
+const USER_RECENT_PREFIX = "user-recent:v1";
+const CALLBACK_STORE_PREFIX = "tg-cb:v1";
 const ACTIVE_INDEX_KEY = "artist-jobs-active:v1";
 const QUEUE_INDEX_KEY = "artist-jobs-queued:v1";
 const WORKER_ORIGIN_KEY = "meta:v1:worker-origin";
@@ -296,6 +317,23 @@ const JOB_RUN_TIME_BUDGET_MS = 8_000;
 const RATE_LIMIT_FALLBACK_SECONDS = 5;
 const COMPLETED_JOB_TTL_S = 24 * 60 * 60;
 const WATCHDOG_MAX_JOBS = 3;
+const MAX_RECENT_ITEMS = 5;
+const MAX_SEARCH_ARTISTS = 5;
+const MAX_SEARCH_SONGS = 8;
+const MAX_CALLBACK_BYTES = 64;
+const HELP_TEXT = `Radio Javan downloader commands:
+
+/start — welcome
+/help — this help
+/search <query> — search songs & artists
+/recent — your last searches and downloads
+/cancel — stop the current artist delivery for this chat
+/status — admin status (admins only)
+
+You can also:
+• Paste a Radio Javan song or artist link
+• Type a search query without /search
+• Use inline mode: @yourbot <query>`;
 
 function getBotToken(env) {
   return env.BOT_TOKEN?.trim() || "";
@@ -339,12 +377,48 @@ function getMaxAudioUrlAttempts(env) {
   return Math.min(getEnvNumber(env, "MAX_AUDIO_URL_ATTEMPTS", DEFAULT_MAX_AUDIO_URL_ATTEMPTS), 8);
 }
 
+function getArtistProgressEvery(env) {
+  return Math.min(getEnvNumber(env, "ARTIST_PROGRESS_EVERY", 5), 50);
+}
+
+function getAdminUserIds(env) {
+  return getEnvString(env, "ADMIN_USER_IDS", "")
+    .split(/[,\s]+/)
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
+function isAdminUser(env, userId) {
+  return getAdminUserIds(env).includes(String(userId));
+}
+
 function queueChatActiveKey(chatId) {
   return `${QUEUE_CHAT_ACTIVE_PREFIX}:${chatId}`;
 }
 
 function queueChatPendingKey(chatId) {
   return `${QUEUE_CHAT_PENDING_PREFIX}:${chatId}`;
+}
+
+function queueChatCancelKey(chatId) {
+  return `${QUEUE_CHAT_CANCEL_PREFIX}:${chatId}`;
+}
+
+function userRecentKey(chatId) {
+  return `${USER_RECENT_PREFIX}:${chatId}`;
+}
+
+function utf8ByteLength(value) {
+  return new TextEncoder().encode(String(value)).length;
+}
+
+function parseBotCommand(text) {
+  if (!text || !text.startsWith("/")) {
+    return null;
+  }
+  const [rawCmd, ...rest] = text.split(/\s+/);
+  const cmd = rawCmd.split("@")[0].slice(1).toLowerCase();
+  return { name: cmd, arg: rest.join(" ").trim() };
 }
 
 function jsonResponse(data, status = 200) {
@@ -1277,10 +1351,28 @@ async function enqueueArtistQueueDelivery(env, chatId, artistName, tracks, optio
   if (kv) {
     const activeRaw = await kv.get(queueChatActiveKey(chatId));
     if (activeRaw) {
+      let activeArtist = null;
+      try {
+        activeArtist = JSON.parse(activeRaw)?.artistName || null;
+      } catch (_) {
+        // ignore
+      }
+
+      if (activeArtist && String(activeArtist).toLowerCase() === String(artistName).toLowerCase()) {
+        await sendMessage(
+          chatId,
+          `Already delivering ${artistName}. Progress continues automatically. Send /cancel to stop it.`,
+          token
+        );
+        return payload;
+      }
+
       await putKv(kv, queueChatPendingKey(chatId), JSON.stringify(payload));
       await sendMessage(
         chatId,
-        `You already have a delivery in progress. Queued ${artistName} ${label} (${tracks.length} songs); it will start after the current one finishes.`,
+        `You already have a delivery in progress` +
+          (activeArtist ? ` (${activeArtist})` : "") +
+          `. Queued ${artistName} ${label} (${tracks.length} songs) next. Send /cancel to stop the current one.`,
         token
       );
       return payload;
@@ -1451,12 +1543,34 @@ async function handleArtistDeliveryDlq(env, body) {
   const token = getBotToken(env);
   const nextSong = Math.min((payload.nextIndex || 0) + 1, payload.total || 0);
   const progress = `Stopped at song ${nextSong}/${payload.total || 0} (sent ${payload.sent || 0}).`;
-  console.error(`Artist delivery DLQ for ${payload.artistName} chat ${payload.chatId}: ${progress}`);
+  const retryCount = Number(payload.dlqRetryCount || 0);
+  console.error(
+    `Artist delivery DLQ for ${payload.artistName} chat ${payload.chatId}: ${progress} retry=${retryCount}`
+  );
+
+  // Auto-retry once from DLQ, then give up and notify.
+  if (retryCount < 1 && payload.chatId && Array.isArray(payload.tracks) && payload.nextIndex < payload.total) {
+    payload.dlqRetryCount = retryCount + 1;
+    payload.rateLimitBoost = Math.min((payload.rateLimitBoost || 0) + 5, 30);
+    try {
+      const delaySeconds = Math.max(getArtistQueueDelaySeconds(env) + (payload.rateLimitBoost || 0), 5);
+      await enqueueArtistQueueMessage(env, payload, { delaySeconds });
+      await sendMessage(
+        payload.chatId,
+        `Artist delivery for ${payload.artistName} hit the DLQ. Auto-retrying once from song ${nextSong}/${payload.total}...`,
+        token
+      );
+      console.log(`DLQ auto-retry queued for ${payload.artistName} chat ${payload.chatId}`);
+      return;
+    } catch (err) {
+      console.warn(`DLQ auto-retry enqueue failed: ${err.message}`);
+    }
+  }
 
   try {
     await sendMessage(
       payload.chatId,
-      `Artist delivery for ${payload.artistName} stalled after repeated failures. ${progress} Send the artist link again to resume.`,
+      `Artist delivery for ${payload.artistName} stalled after repeated failures. ${progress} Send the artist link again or /search ${payload.artistName}.`,
       token
     );
   } catch (err) {
@@ -1603,6 +1717,20 @@ async function runQueuedArtistMessage(env, body) {
   payload.sentTrackKeys ||= [];
   payload.failed ||= [];
 
+  if (await isChatDeliveryCancelled(env, payload.chatId, payload.createdAt)) {
+    // Timestamp latch: only payloads created at/before cancel time are stopped.
+    console.log(`Queue artist delivery ${payload.artistName}: cancelled by user`);
+    try {
+      const kv = getJobStore(env);
+      if (kv) {
+        await kv.delete(queueChatActiveKey(payload.chatId));
+      }
+    } catch (_) {
+      // best effort
+    }
+    return;
+  }
+
   console.log(
     `Queue artist delivery ${payload.artistName}: starting index ${payload.nextIndex + 1}/${payload.total}`
   );
@@ -1628,6 +1756,15 @@ async function runQueuedArtistMessage(env, body) {
       console.log(
         `Queue artist delivery ${payload.artistName}: sent ${payload.sent}/${payload.total}`
       );
+
+      const every = getArtistProgressEvery(env);
+      if (every > 0 && payload.sent % every === 0 && payload.nextIndex < payload.total) {
+        await sendMessage(
+          payload.chatId,
+          `Progress: ${payload.sent}/${payload.total} songs sent for ${payload.artistName}...`,
+          token
+        );
+      }
     } catch (err) {
       if (err instanceof TelegramRateLimitError) {
         throw err;
@@ -1656,7 +1793,10 @@ async function runQueuedArtistMessage(env, body) {
     return;
   }
 
-  const delaySeconds = getArtistQueueDelaySeconds(env);
+  const delaySeconds = Math.max(
+    getArtistQueueDelaySeconds(env) + Number(payload.rateLimitBoost || 0),
+    getArtistQueueDelaySeconds(env)
+  );
   await enqueueArtistQueueMessage(env, payload, { delaySeconds });
   console.log(
     `Queue artist delivery ${payload.artistName}: enqueued index ${
@@ -1989,9 +2129,503 @@ async function runWatchdog(env, ctx) {
   await promoteQueuedJobs(env, origin);
 }
 
+async function isChatDeliveryCancelled(env, chatId, payloadCreatedAt = null) {
+  const kv = getJobStore(env);
+  if (!kv || !chatId) {
+    return false;
+  }
+  try {
+    const raw = await kv.get(queueChatCancelKey(chatId));
+    if (!raw) {
+      return false;
+    }
+    let cancelledAtMs = NaN;
+    try {
+      const parsed = JSON.parse(raw);
+      cancelledAtMs = Date.parse(parsed?.cancelledAt || "");
+    } catch {
+      // Legacy cancel flags were plain "1".
+      cancelledAtMs = Date.now();
+    }
+    if (!Number.isFinite(cancelledAtMs)) {
+      return true;
+    }
+    if (!payloadCreatedAt) {
+      return true;
+    }
+    const createdAtMs = Date.parse(payloadCreatedAt);
+    if (!Number.isFinite(createdAtMs)) {
+      return true;
+    }
+    return createdAtMs <= cancelledAtMs;
+  } catch {
+    return false;
+  }
+}
+
+async function cancelChatArtistDelivery(env, chatId) {
+  const kv = getJobStore(env);
+  const token = getBotToken(env);
+  if (!kv) {
+    await sendMessage(chatId, "Cancel is unavailable without ARTIST_JOB_STORE.", token);
+    return { cancelled: false };
+  }
+
+  let activeArtist = null;
+  try {
+    const activeRaw = await kv.get(queueChatActiveKey(chatId));
+    if (activeRaw) {
+      activeArtist = JSON.parse(activeRaw)?.artistName || null;
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  try {
+    await putKv(
+      kv,
+      queueChatCancelKey(chatId),
+      JSON.stringify({ cancelledAt: new Date().toISOString() }),
+      { expirationTtl: 60 * 60 }
+    );
+    await kv.delete(queueChatActiveKey(chatId));
+    await kv.delete(queueChatPendingKey(chatId));
+  } catch (err) {
+    console.warn(`Cancel cleanup failed for ${chatId}: ${err.message}`);
+  }
+
+  await sendMessage(
+    chatId,
+    activeArtist
+      ? `Cancel requested for ${activeArtist}. Delivery will stop shortly.`
+      : "No active artist delivery found for this chat. If songs are still arriving, wait a moment and try /cancel again.",
+    token
+  );
+  return { cancelled: true, activeArtist };
+}
+
+async function readUserRecents(env, chatId) {
+  const kv = getJobStore(env);
+  if (!kv) {
+    return [];
+  }
+  try {
+    const raw = await kv.get(userRecentKey(chatId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function pushUserRecent(env, chatId, item) {
+  const kv = getJobStore(env);
+  if (!kv || !chatId || !item) {
+    return;
+  }
+  try {
+    const existing = await readUserRecents(env, chatId);
+    const key = `${item.type}:${String(item.value || "").toLowerCase()}`;
+    const next = [
+      { ...item, at: new Date().toISOString() },
+      ...existing.filter((entry) => `${entry.type}:${String(entry.value || "").toLowerCase()}` !== key),
+    ].slice(0, MAX_RECENT_ITEMS);
+    await putKv(kv, userRecentKey(chatId), JSON.stringify(next), { expirationTtl: 30 * 24 * 60 * 60 });
+  } catch (err) {
+    if (!(err instanceof KvWriteLimitError)) {
+      console.warn(`Failed to store recent item for ${chatId}: ${err.message}`);
+    }
+  }
+}
+
+async function makeCallbackData(env, type, value) {
+  const raw = `${type}:${value}`;
+  if (utf8ByteLength(raw) <= MAX_CALLBACK_BYTES) {
+    return raw;
+  }
+  const kv = getJobStore(env);
+  const id = crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+  if (kv) {
+    try {
+      await putKv(kv, `${CALLBACK_STORE_PREFIX}:${id}`, JSON.stringify({ type, value }), {
+        expirationTtl: 60 * 60,
+      });
+    } catch (err) {
+      console.warn(`Failed to store long callback payload: ${err.message}`);
+      return raw.slice(0, MAX_CALLBACK_BYTES);
+    }
+  }
+  return `c:${id}`;
+}
+
+async function resolveCallbackData(env, data) {
+  if (!data) {
+    return null;
+  }
+  if (data.startsWith("c:")) {
+    const kv = getJobStore(env);
+    if (!kv) {
+      return null;
+    }
+    try {
+      const raw = await kv.get(`${CALLBACK_STORE_PREFIX}:${data.slice(2)}`);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+  const idx = data.indexOf(":");
+  if (idx <= 0) {
+    return null;
+  }
+  return { type: data.slice(0, idx), value: data.slice(idx + 1) };
+}
+
+function summarizeSearchResults(artists, songs) {
+  const lines = ["Search results — tap a button:"];
+  if (artists.length) {
+    lines.push("", "Artists:");
+    for (const artist of artists) {
+      lines.push(`• ${artist.name}`);
+    }
+  }
+  if (songs.length) {
+    lines.push("", "Songs:");
+    for (const song of songs) {
+      lines.push(`• ${song.artist ? `${song.artist} - ` : ""}${song.song || song.title || song.permlink}`);
+    }
+  }
+  if (!artists.length && !songs.length) {
+    return "No songs or artists found.";
+  }
+  return lines.join("\n");
+}
+
+async function buildSearchKeyboard(env, artists, songs) {
+  const rows = [];
+  for (const artist of artists) {
+    rows.push([
+      {
+        text: `🎤 ${artist.name}`.slice(0, 64),
+        callback_data: await makeCallbackData(env, "a", artist.query || artist.name),
+      },
+    ]);
+  }
+  for (const song of songs) {
+    const label = `${song.artist ? `${song.artist} - ` : ""}${song.song || song.title || song.permlink}`;
+    rows.push([
+      {
+        text: `🎵 ${label}`.slice(0, 64),
+        callback_data: await makeCallbackData(env, "s", song.permlink),
+      },
+    ]);
+  }
+  return { inline_keyboard: rows };
+}
+
+async function searchRadioJavan(env, query) {
+  const trimmed = String(query || "").trim();
+  if (!trimmed) {
+    return { artists: [], songs: [] };
+  }
+
+  const data = await fetchRadioJavanApi(
+    env,
+    `/api/p/search?query=${encodeURIComponent(trimmed)}`,
+    `/search`
+  );
+
+  const artists = [];
+  const songs = [];
+  const seenArtists = new Set();
+  const seenSongs = new Set();
+
+  const pushArtist = (item) => {
+    const name = item?.name || item?.query || item?.id;
+    const queryName = item?.query || item?.name || item?.id;
+    if (!name || !queryName) {
+      return;
+    }
+    const key = String(queryName).toLowerCase();
+    if (seenArtists.has(key)) {
+      return;
+    }
+    seenArtists.add(key);
+    artists.push({ name: String(name), query: String(queryName) });
+  };
+
+  const pushSong = (item) => {
+    if (!item?.permlink || isSkippedTrack(item)) {
+      return;
+    }
+    const key = String(item.permlink).toLowerCase();
+    if (seenSongs.has(key)) {
+      return;
+    }
+    seenSongs.add(key);
+    songs.push({
+      permlink: item.permlink,
+      title: item.title || item.song || item.permlink,
+      song: item.song || item.title || item.permlink,
+      artist: item.artist || "",
+    });
+  };
+
+  for (const item of data.top || []) {
+    if (item?.type === "artist") {
+      pushArtist(item);
+    } else if (item?.permlink || item?.type === "mp3") {
+      pushSong(item);
+    }
+  }
+  for (const item of data.artists || []) {
+    pushArtist(item);
+  }
+  for (const item of data.all_artists || []) {
+    pushArtist(item);
+  }
+  for (const item of data.mp3s || []) {
+    pushSong(item);
+  }
+
+  return {
+    artists: artists.slice(0, MAX_SEARCH_ARTISTS),
+    songs: songs.slice(0, MAX_SEARCH_SONGS),
+  };
+}
+
+async function handleSearchQuery(chatId, query, env) {
+  const token = getBotToken(env);
+  const trimmed = String(query || "").trim();
+  if (!trimmed) {
+    await sendMessage(chatId, "Usage: /search <song or artist>", token);
+    return;
+  }
+
+  await sendMessage(chatId, `Searching for "${trimmed}"...`, token);
+  const { artists, songs } = await searchRadioJavan(env, trimmed);
+  await pushUserRecent(env, chatId, { type: "search", value: trimmed, label: trimmed });
+
+  if (!artists.length && !songs.length) {
+    await sendMessage(chatId, `No results for "${trimmed}".`, token);
+    return;
+  }
+
+  const keyboard = await buildSearchKeyboard(env, artists, songs);
+  await sendMessage(chatId, summarizeSearchResults(artists, songs), token, {
+    reply_markup: keyboard,
+  });
+}
+
+async function handleRecentCommand(chatId, env) {
+  const token = getBotToken(env);
+  const recents = await readUserRecents(env, chatId);
+  if (!recents.length) {
+    await sendMessage(chatId, "No recent searches or downloads yet.", token);
+    return;
+  }
+
+  const rows = [];
+  const lines = ["Recent activity:"];
+  for (const item of recents) {
+    if (item.type === "search") {
+      lines.push(`• search: ${item.label || item.value}`);
+      rows.push([
+        {
+          text: `🔎 ${item.label || item.value}`.slice(0, 64),
+          callback_data: await makeCallbackData(env, "q", item.value),
+        },
+      ]);
+    } else if (item.type === "artist") {
+      lines.push(`• artist: ${item.label || item.value}`);
+      rows.push([
+        {
+          text: `🎤 ${item.label || item.value}`.slice(0, 64),
+          callback_data: await makeCallbackData(env, "a", item.value),
+        },
+      ]);
+    } else if (item.type === "song") {
+      lines.push(`• song: ${item.label || item.value}`);
+      rows.push([
+        {
+          text: `🎵 ${item.label || item.value}`.slice(0, 64),
+          callback_data: await makeCallbackData(env, "s", item.value),
+        },
+      ]);
+    }
+  }
+
+  await sendMessage(chatId, lines.join("\n"), token, {
+    reply_markup: { inline_keyboard: rows },
+  });
+}
+
+async function handleStatusCommand(chatId, userId, env) {
+  const token = getBotToken(env);
+  if (!isAdminUser(env, userId)) {
+    await sendMessage(chatId, " /status is admin-only.", token);
+    return;
+  }
+
+  const kv = getJobStore(env);
+  let active = null;
+  let pending = null;
+  let cancel = false;
+  if (kv) {
+    try {
+      const activeRaw = await kv.get(queueChatActiveKey(chatId));
+      const pendingRaw = await kv.get(queueChatPendingKey(chatId));
+      cancel = Boolean(await kv.get(queueChatCancelKey(chatId)));
+      active = activeRaw ? JSON.parse(activeRaw) : null;
+      pending = pendingRaw ? JSON.parse(pendingRaw) : null;
+    } catch (err) {
+      console.warn(`Status read failed: ${err.message}`);
+    }
+  }
+
+  const lines = [
+    "Admin status",
+    `bot queue: ${ARTIST_DELIVERY_QUEUE_NAME}`,
+    `dlq: ${ARTIST_DELIVERY_DLQ_NAME}`,
+    `bulkCacheWrites: ${shouldCacheArtistUploads(env)}`,
+    `queueDelay: ${getArtistQueueDelaySeconds(env)}s`,
+    `progressEvery: ${getArtistProgressEvery(env)}`,
+    `active: ${active ? `${active.artistName} (${active.total || "?"})` : "none"}`,
+    `pending: ${pending ? `${pending.artistName} (${pending.total || pending.tracks?.length || "?"})` : "none"}`,
+    `cancelFlag: ${cancel ? "yes" : "no"}`,
+    `admins: ${getAdminUserIds(env).join(", ") || "(none)"}`,
+  ];
+  await sendMessage(chatId, lines.join("\n"), token);
+}
+
+async function handleCallbackQuery(callbackQuery, env, origin) {
+  const token = getBotToken(env);
+  const chatId = callbackQuery.message?.chat?.id || callbackQuery.from?.id;
+  const data = callbackQuery.data;
+  if (!chatId || !data) {
+    return;
+  }
+
+  try {
+    await answerCallbackQuery(callbackQuery.id, token);
+  } catch (err) {
+    console.warn(`answerCallbackQuery failed: ${err.message}`);
+  }
+
+  const resolved = await resolveCallbackData(env, data);
+  if (!resolved?.type || !resolved?.value) {
+    await sendMessage(chatId, "That button expired. Please search again.", token);
+    return;
+  }
+
+  if (resolved.type === "q") {
+    await handleSearchQuery(chatId, resolved.value, env);
+    return;
+  }
+
+  if (resolved.type === "a") {
+    const artistName = resolved.value;
+    await pushUserRecent(env, chatId, {
+      type: "artist",
+      value: artistName,
+      label: artistName,
+    });
+    await handleUrl(chatId, `https://play.radiojavan.com/artist/${encodeURIComponent(artistName)}`, env, origin);
+    return;
+  }
+
+  if (resolved.type === "s") {
+    const permlink = resolved.value;
+    await pushUserRecent(env, chatId, {
+      type: "song",
+      value: permlink,
+      label: permlink,
+    });
+    await handleUrl(chatId, `https://play.radiojavan.com/song/${encodeURIComponent(permlink)}`, env, origin);
+    return;
+  }
+
+  await sendMessage(chatId, "Unknown button action.", token);
+}
+
+async function handleInlineQuery(inlineQuery, env) {
+  const token = getBotToken(env);
+  const query = inlineQuery.query?.trim() || "";
+  const userId = inlineQuery.from?.id;
+  let artists = [];
+  let songs = [];
+
+  try {
+    if (query) {
+      ({ artists, songs } = await searchRadioJavan(env, query));
+      if (userId) {
+        await pushUserRecent(env, userId, { type: "search", value: query, label: query });
+      }
+    } else if (userId) {
+      const recents = await readUserRecents(env, userId);
+      for (const item of recents) {
+        if (item.type === "artist") {
+          artists.push({ name: item.label || item.value, query: item.value });
+        } else if (item.type === "song") {
+          songs.push({
+            permlink: item.value,
+            title: item.label || item.value,
+            song: item.label || item.value,
+            artist: "",
+          });
+        }
+      }
+      artists = artists.slice(0, MAX_SEARCH_ARTISTS);
+      songs = songs.slice(0, MAX_SEARCH_SONGS);
+    }
+  } catch (err) {
+    console.warn(`Inline search failed: ${err.message}`);
+  }
+
+  const results = [];
+  for (const artist of artists) {
+    const link = `https://play.radiojavan.com/artist/${encodeURIComponent(artist.query || artist.name)}`;
+    results.push({
+      type: "article",
+      id: `a-${String(artist.query || artist.name).slice(0, 40)}`,
+      title: `Artist: ${artist.name}`,
+      description: "Send artist link to download all songs",
+      input_message_content: { message_text: link },
+    });
+  }
+  for (const song of songs) {
+    const link = `https://play.radiojavan.com/song/${encodeURIComponent(song.permlink)}`;
+    results.push({
+      type: "article",
+      id: `s-${String(song.permlink).slice(0, 50)}`,
+      title: song.artist ? `${song.artist} - ${song.song || song.title}` : song.song || song.title || song.permlink,
+      description: "Send song link to download",
+      input_message_content: { message_text: link },
+    });
+  }
+
+  if (!results.length) {
+    results.push({
+      type: "article",
+      id: "empty",
+      title: query ? "No results" : "Type to search Radio Javan",
+      description: query ? `Nothing found for ${query}` : "Try an artist or song name",
+      input_message_content: {
+        message_text: query ? `No Radio Javan results for ${query}` : "Type @bot <query> to search Radio Javan",
+      },
+    });
+  }
+
+  try {
+    await answerInlineQuery(inlineQuery.id, results.slice(0, 20), token);
+  } catch (err) {
+    // Synthetic webhook tests and stale inline queries can fail here; ignore quietly.
+    console.warn(`answerInlineQuery failed: ${err.message}`);
+  }
+}
+
 async function processUpdate(update, env, origin) {
   const token = getBotToken(env);
-  const message = update.message || update.edited_message;
 
   try {
     if (!token) {
@@ -1999,6 +2633,17 @@ async function processUpdate(update, env, origin) {
       return;
     }
 
+    if (update.inline_query) {
+      await handleInlineQuery(update.inline_query, env);
+      return;
+    }
+
+    if (update.callback_query) {
+      await handleCallbackQuery(update.callback_query, env, origin);
+      return;
+    }
+
+    const message = update.message || update.edited_message;
     if (!message) {
       return;
     }
@@ -2008,25 +2653,81 @@ async function processUpdate(update, env, origin) {
       return;
     }
 
+    const userId = message.from?.id || chatId;
     const text = message.text?.trim();
     const link = extractLinkFromMessage(message);
+    const command = parseBotCommand(text || "");
 
-    if (text === "/start") {
-      await sendMessage(chatId, "Welcome to the bot! 🚀", token);
+    if (command?.name === "start") {
+      await sendMessage(
+        chatId,
+        "Welcome to the Radio Javan downloader bot.\n\nSend a song/artist link, use /search, or try inline mode.\n\n" +
+          HELP_TEXT,
+        token
+      );
+      return;
+    }
+
+    if (command?.name === "help") {
+      await sendMessage(chatId, HELP_TEXT, token);
+      return;
+    }
+
+    if (command?.name === "cancel") {
+      await cancelChatArtistDelivery(env, chatId);
+      return;
+    }
+
+    if (command?.name === "status") {
+      await handleStatusCommand(chatId, userId, env);
+      return;
+    }
+
+    if (command?.name === "recent" || command?.name === "recents") {
+      await handleRecentCommand(chatId, env);
+      return;
+    }
+
+    if (command?.name === "search") {
+      await handleSearchQuery(chatId, command.arg, env);
       return;
     }
 
     if (link) {
+      try {
+        const parsed = parseMediaFromUrl(
+          link.startsWith("https://rj.app/") ? link : normalizeInput(link)
+        );
+        if (parsed.mediaType === "artist") {
+          await pushUserRecent(env, chatId, {
+            type: "artist",
+            value: parsed.mediaName,
+            label: parsed.mediaName,
+          });
+        } else if (parsed.mediaType === "song") {
+          await pushUserRecent(env, chatId, {
+            type: "song",
+            value: parsed.mediaName,
+            label: parsed.mediaName,
+          });
+        }
+      } catch (_) {
+        // Link may be a short URL; handleUrl will resolve it.
+      }
       await handleUrl(chatId, link, env, origin);
       return;
     }
 
     if (text) {
-      await sendMessage(chatId, "Invalid input! Please send a valid Radio Javan link.", token);
+      await handleSearchQuery(chatId, text, env);
     }
   } catch (err) {
     console.error(`processUpdate failed: ${err.message}`);
-    const chatId = message?.chat?.id;
+    const chatId =
+      update.message?.chat?.id ||
+      update.edited_message?.chat?.id ||
+      update.callback_query?.message?.chat?.id ||
+      update.callback_query?.from?.id;
     if (chatId && token) {
       try {
         await sendMessage(chatId, `❌ Bot error: ${err.message}`, token);
@@ -2254,20 +2955,44 @@ async function sendAudio(chatId, fileBlob, fileName, botToken) {
   return callTelegram(botToken, "sendAudio", { body: formData });
 }
 
-async function sendMessage(chatId, text, botToken) {
+async function sendMessage(chatId, text, botToken, extra = {}) {
   return callTelegram(botToken, "sendMessage", {
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text }),
+    body: JSON.stringify({ chat_id: chatId, text, ...extra }),
+  });
+}
+
+async function answerCallbackQuery(callbackQueryId, botToken, text = "") {
+  return callTelegram(botToken, "answerCallbackQuery", {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      callback_query_id: callbackQueryId,
+      text: text || undefined,
+    }),
+  });
+}
+
+async function answerInlineQuery(inlineQueryId, results, botToken) {
+  return callTelegram(botToken, "answerInlineQuery", {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      inline_query_id: inlineQueryId,
+      results,
+      cache_time: 5,
+      is_personal: true,
+    }),
   });
 }
 
 export {
   ARTIST_DELIVERY_DLQ_NAME,
   ARTIST_DELIVERY_QUEUE_NAME,
+  HELP_TEXT,
   TelegramRateLimitError,
   buildFallbackUrls,
   cacheTelegramFile,
   callTelegram,
+  cancelChatArtistDelivery,
   compactQueuedTrack,
   createQueuedArtistPayload,
   createStatelessArtistPayload,
@@ -2284,18 +3009,23 @@ export {
   getTelegramFileCacheKey,
   handleArtistDeliveryDlq,
   handleHealth,
+  handleInlineQuery,
+  handleSearchQuery,
   handleUrl,
   hostnameOf,
+  isAdminUser,
   isTrackCached,
   normalizeCachePermlink,
   normalizeInput,
   orderSongUrls,
+  parseBotCommand,
   parseMediaFromUrl,
   processUpdate,
   resolveSongUrls,
   runStatelessArtistBatch,
   runQueuedArtistMessage,
   runWatchdog,
+  searchRadioJavan,
   sendTrackToUser,
   warmArtistMissingTracks,
 };

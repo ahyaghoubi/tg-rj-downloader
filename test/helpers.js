@@ -125,10 +125,12 @@ export function mockTelegramFetch({ ok = true, retryAfter = 0, fileId = "telegra
     }
 
     const method = url.split("/").pop();
-    const result =
-      method === "sendMessage"
-        ? { message_id: 1, text: init.body }
-        : { audio: { file_id: fileId } };
+    let result = { audio: { file_id: fileId } };
+    if (method === "sendMessage") {
+      result = { message_id: 1, text: init.body };
+    } else if (method === "answerCallbackQuery" || method === "answerInlineQuery") {
+      result = true;
+    }
 
     return new Response(JSON.stringify({ ok: true, result }), {
       status: 200,

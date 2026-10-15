@@ -216,7 +216,7 @@ test("Worker queue handler acks successful messages", async () => {
   }
 });
 
-test("Worker queue handler retries Telegram 429 with retry_after delay", async () => {
+test("Worker queue handler requeues Telegram 429 with boosted delay", async () => {
   const telegram = mockTelegramFetch({ ok: false, retryAfter: 11 });
   const env = createEnv();
   const batch = createQueueBatch([
@@ -234,9 +234,11 @@ test("Worker queue handler retries Telegram 429 with retry_after delay", async (
 
   try {
     await worker.queue(batch, env, {});
-    assert.equal(batch.messages[0].acked, false);
-    assert.equal(batch.messages[0].retried, true);
-    assert.deepEqual(batch.messages[0].retryOptions, { delaySeconds: 11 });
+    assert.equal(batch.messages[0].acked, true);
+    assert.equal(batch.messages[0].retried, false);
+    assert.equal(env.queueMessages.length, 1);
+    assert.equal(env.queueMessages[0].payload.rateLimitBoost >= 2, true);
+    assert.equal(env.queueMessages[0].options.delaySeconds >= 11, true);
   } finally {
     telegram.restore();
   }
@@ -374,7 +376,7 @@ test("runQueuedArtistMessage promotes a pending artist after completion", async 
   }
 });
 
-test("Worker DLQ handler notifies the chat, acks, and clears the chat lock", async () => {
+test("Worker DLQ handler auto-retries once before giving up", async () => {
   const telegram = mockTelegramFetch();
   const env = createEnv();
   env.ARTIST_JOB_STORE.store.set(
@@ -400,14 +402,16 @@ test("Worker DLQ handler notifies the chat, acks, and clears the chat lock", asy
   try {
     await worker.queue(batch, env, {});
     assert.equal(batch.messages[0].acked, true);
-    assert.equal(env.ARTIST_JOB_STORE.store.has("artist-queue-active:v1:224032101"), false);
-    assert.match(telegram.calls[0].init.body, /stalled after repeated failures/);
+    assert.equal(env.queueMessages.length, 1);
+    assert.equal(env.queueMessages[0].payload.dlqRetryCount, 1);
+    assert.equal(env.ARTIST_JOB_STORE.store.has("artist-queue-active:v1:224032101"), true);
+    assert.match(telegram.calls[0].init.body, /Auto-retrying once/);
   } finally {
     telegram.restore();
   }
 });
 
-test("handleArtistDeliveryDlq promotes pending delivery after a stall", async () => {
+test("handleArtistDeliveryDlq gives up after one retry and promotes pending", async () => {
   const telegram = mockTelegramFetch();
   const env = createEnv();
   env.ARTIST_JOB_STORE.store.set(
@@ -427,13 +431,16 @@ test("handleArtistDeliveryDlq promotes pending delivery after a stall", async ()
     await handleArtistDeliveryDlq(env, {
       chatId: "224032101",
       artistName: "hichkas",
+      tracks: [{ permlink: "Hichkas-Seven", title: "Seven", mediaType: "song" }],
       total: 35,
       nextIndex: 6,
       sent: 6,
+      dlqRetryCount: 1,
     });
 
     assert.equal(env.queueMessages.length, 1);
     assert.equal(env.queueMessages[0].payload.artistName, "chaartaar");
+    assert.match(telegram.calls[0].init.body, /stalled after repeated failures/);
   } finally {
     telegram.restore();
   }

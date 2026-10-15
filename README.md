@@ -7,7 +7,10 @@ A Cloudflare Worker script that turns your Telegram bot into a Radio Javan media
 ## Features
 
 - **Telegram Webhook Integration**  
-  Listens for updates on the `/webhook` route and processes commands or media links.
+  Listens for updates on the `/webhook` route and processes commands, search, inline queries, callback buttons, or media links.
+  - `/search <query>`, plain-text search, and inline mode (`@bot query`) with tap-to-download buttons
+  - `/help`, `/recent`, `/cancel`, and admin `/status`
+  - Progress updates during artist delivery and clearer duplicate-delivery messages
 
 - **Media Processing**  
   - Automatically resolves shortened URLs (e.g., `https://rj.app/`).

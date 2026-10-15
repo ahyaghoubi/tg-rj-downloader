@@ -53,6 +53,8 @@ ENABLE_BULK_CACHE_WRITES = "false"
 MAX_ACTIVE_ARTIST_JOBS = "1"
 ARTIST_QUEUE_DELAY_SECONDS = "2"
 MAX_AUDIO_URL_ATTEMPTS = "3"
+ARTIST_PROGRESS_EVERY = "5"
+ADMIN_USER_IDS = "224032101"
 
 # Watchdog that resumes stuck artist jobs and promotes queued ones.
 [triggers]
