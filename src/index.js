@@ -11,6 +11,7 @@ import {
 } from "./delivery/queue.js";
 import { handleArtistDeliveryDlq } from "./delivery/dlq.js";
 import { TelegramRateLimitError } from "./telegram/api.js";
+import { recordAdminError } from "./admin/ops-log.js";
 
 const worker = {
   async fetch(request, env, ctx) {
@@ -72,6 +73,13 @@ const worker = {
         }
 
         console.error(`Queue artist delivery failed: ${err.message}`);
+        const payload = normalizeQueuePayload(message.body) || {};
+        await recordAdminError(env, {
+          where: "queue",
+          message: err.message,
+          chatId: payload.chatId,
+          detail: payload.artistName || null,
+        });
         message.retry();
       }
     }

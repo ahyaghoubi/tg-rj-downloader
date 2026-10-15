@@ -5,6 +5,7 @@ import { sendMessage } from "../telegram/send.js";
 import { makeCallbackData } from "./callback-store.js";
 import { enqueueArtistQueueDelivery } from "../delivery/queue.js";
 import { incrementStat } from "../admin/stats.js";
+import { checkAndConsumeQuota } from "../admin/users.js";
 
 async function buildArtistChoiceKeyboard(env, artistName, catalog) {
   const rows = [];
@@ -84,7 +85,7 @@ async function presentArtistMenu(chatId, artistName, env) {
   await sendMessage(chatId, lines.join("\n"), token, { reply_markup: keyboard });
 }
 
-async function enqueueBulkDelivery(env, chatId, label, tracks) {
+async function enqueueBulkDelivery(env, chatId, label, tracks, { skipQuota = false } = {}) {
   const token = getBotToken(env);
   if (!env.ARTIST_QUEUE) {
     await sendMessage(
@@ -98,8 +99,30 @@ async function enqueueBulkDelivery(env, chatId, label, tracks) {
     await sendMessage(chatId, "آهنگی برای ارسال پیدا نشد.", token);
     return;
   }
+  let deliveryTracks = tracks;
+  if (!skipQuota) {
+    const quota = await checkAndConsumeQuota(env, chatId, deliveryTracks.length);
+    if (!quota.ok) {
+      if (quota.remaining > 0) {
+        deliveryTracks = deliveryTracks.slice(0, quota.remaining);
+        await checkAndConsumeQuota(env, chatId, deliveryTracks.length);
+        await sendMessage(
+          chatId,
+          `سهمیهٔ امروز محدود است؛ فقط ${deliveryTracks.length} آهنگ ارسال می‌شود (${quota.used}/${quota.limit}).`,
+          token
+        );
+      } else {
+        await sendMessage(
+          chatId,
+          `سهمیهٔ دانلود روزانه تمام شده است (${quota.used}/${quota.limit}). فردا دوباره تلاش کنید.`,
+          token
+        );
+        return;
+      }
+    }
+  }
   try {
-    await enqueueArtistQueueDelivery(env, chatId, label, tracks);
+    await enqueueArtistQueueDelivery(env, chatId, label, deliveryTracks);
   } catch (err) {
     console.error(`Queue delivery failed for ${label}: ${err.message}`);
     await sendMessage(chatId, `❌ خطا در صف ارسال: ${err.message}`, token);

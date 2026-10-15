@@ -18,6 +18,7 @@ import { presentArtistMenu, startArtistDelivery, enqueueBulkDelivery } from "./a
 import { fetchPlaylistTracks, fetchAlbumTracks } from "../rj/tracks.js";
 import { isUserBanned, touchUser } from "../admin/users.js";
 import { incrementStat } from "../admin/stats.js";
+import { recordAdminError } from "../admin/ops-log.js";
 
 async function handleStartPayload(chatId, payload, env, origin) {
   const resolved = await resolveStartPayload(env, payload);
@@ -240,6 +241,11 @@ async function processUpdate(update, env, origin) {
       update.edited_message?.chat?.id ||
       update.callback_query?.message?.chat?.id ||
       update.callback_query?.from?.id;
+    await recordAdminError(env, {
+      where: "processUpdate",
+      message: err.message,
+      chatId,
+    });
     if (chatId && token) {
       try {
         await sendMessage(chatId, `❌ خطای ربات: ${err.message}`, token);

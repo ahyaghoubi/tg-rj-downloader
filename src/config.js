@@ -65,6 +65,16 @@ const ADMIN_USER_INDEX_LIMIT = 100;
 
 const ADMIN_DLQ_EVENTS_LIMIT = 40;
 
+const ADMIN_ERRORS_KEY = "admin-errors:v1";
+
+const ADMIN_AUDIT_KEY = "admin-audit:v1";
+
+const ADMIN_ERRORS_LIMIT = 40;
+
+const ADMIN_AUDIT_LIMIT = 50;
+
+const DEFAULT_DAILY_DOWNLOAD_LIMIT = 80;
+
 const RATE_LIMIT_FALLBACK_SECONDS = 5;
 
 const MAX_RECENT_ITEMS = 5;
@@ -89,6 +99,10 @@ function getBotToken(env) {
 
 function getAdminToken(env) {
   return env.ADMIN_TOKEN?.trim() || "";
+}
+
+function getDefaultDailyDownloadLimit(env) {
+  return Math.min(getEnvNumber(env, "DEFAULT_DAILY_DOWNLOAD_LIMIT", DEFAULT_DAILY_DOWNLOAD_LIMIT), 5000);
 }
 
 function getEnvString(env, key, fallback = "") {
@@ -212,6 +226,11 @@ export {
   ADMIN_USER_INDEX_KEY,
   ADMIN_DLQ_EVENTS_KEY,
   ADMIN_STATS_PREFIX,
+  ADMIN_ERRORS_KEY,
+  ADMIN_AUDIT_KEY,
+  ADMIN_ERRORS_LIMIT,
+  ADMIN_AUDIT_LIMIT,
+  DEFAULT_DAILY_DOWNLOAD_LIMIT,
   CALLBACK_STORE_PREFIX,
   ADMIN_COOKIE_NAME,
   ADMIN_SESSION_TTL_S,
@@ -228,6 +247,7 @@ export {
   MAX_START_PAYLOAD_BYTES,
   getBotToken,
   getAdminToken,
+  getDefaultDailyDownloadLimit,
   getEnvString,
   getEnvBoolean,
   getEnvNumber,

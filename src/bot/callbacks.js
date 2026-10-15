@@ -1,8 +1,12 @@
-import { getBotToken } from "../config.js";
+import { getBotToken, isAdminUser, getJobStore, queueChatPendingKey } from "../config.js";
 import { sendMessage, answerCallbackQuery } from "../telegram/send.js";
 import { resolveCallbackData } from "./callback-store.js";
 import { handleSearchQuery } from "./search.js";
-import { pushUserRecent } from "./commands.js";
+import {
+  pushUserRecent,
+  cancelChatArtistDelivery,
+  handleStatusCommand,
+} from "./commands.js";
 import { handleUrl } from "./handle-url.js";
 import { presentArtistMenu, startArtistDelivery, enqueueBulkDelivery } from "./artist-menu.js";
 import { fetchPlaylistTracks, fetchAlbumTracks } from "../rj/tracks.js";
@@ -24,6 +28,38 @@ async function handleCallbackQuery(callbackQuery, env, origin) {
   const resolved = await resolveCallbackData(env, data);
   if (!resolved?.type || resolved.value == null || resolved.value === "") {
     await sendMessage(chatId, "این دکمه منقضی شده. لطفاً دوباره جستجو کنید.", token);
+    return;
+  }
+
+  if (resolved.type === "st") {
+    const fromId = callbackQuery.from?.id;
+    if (!isAdminUser(env, fromId)) {
+      await sendMessage(chatId, "/status فقط برای ادمین است.", token);
+      return;
+    }
+    if (resolved.value === "refresh") {
+      await handleStatusCommand(chatId, fromId, env);
+      return;
+    }
+    if (resolved.value === "cancel") {
+      await cancelChatArtistDelivery(env, chatId);
+      await handleStatusCommand(chatId, fromId, env);
+      return;
+    }
+    if (resolved.value === "clear") {
+      const kv = getJobStore(env);
+      if (kv) {
+        try {
+          await kv.delete(queueChatPendingKey(chatId));
+        } catch (err) {
+          console.warn(`Clear pending failed: ${err.message}`);
+        }
+      }
+      await sendMessage(chatId, "pending پاک شد.", token);
+      await handleStatusCommand(chatId, fromId, env);
+      return;
+    }
+    await sendMessage(chatId, "دکمهٔ وضعیت شناخته نشد.", token);
     return;
   }
 

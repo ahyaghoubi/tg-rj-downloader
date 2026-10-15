@@ -7,7 +7,10 @@ import {
   putKv,
   userKey,
   KvWriteLimitError,
+  getDefaultDailyDownloadLimit,
+  isAdminUser,
 } from "../config.js";
+import { utcDayKey } from "./stats.js";
 
 function emptyUser(chatId) {
   const now = new Date().toISOString();
@@ -18,8 +21,35 @@ function emptyUser(chatId) {
     firstSeenAt: now,
     lastSeenAt: now,
     banned: false,
+    vip: false,
+    dailyDownloadLimit: null,
+    downloadsToday: { day: utcDayKey(), count: 0 },
     note: "",
     updatedAt: now,
+  };
+}
+
+function normalizeUser(chatId, parsed = {}) {
+  const base = emptyUser(chatId);
+  const downloadsToday =
+    parsed.downloadsToday && typeof parsed.downloadsToday === "object"
+      ? {
+          day: parsed.downloadsToday.day || utcDayKey(),
+          count: Number(parsed.downloadsToday.count) || 0,
+        }
+      : base.downloadsToday;
+  return {
+    ...base,
+    ...parsed,
+    chatId: String(parsed.chatId || chatId),
+    banned: Boolean(parsed.banned),
+    vip: Boolean(parsed.vip),
+    dailyDownloadLimit:
+      parsed.dailyDownloadLimit == null || parsed.dailyDownloadLimit === ""
+        ? null
+        : Number(parsed.dailyDownloadLimit),
+    downloadsToday,
+    note: typeof parsed.note === "string" ? parsed.note : "",
   };
 }
 
@@ -34,13 +64,7 @@ async function getUser(env, chatId) {
       return null;
     }
     const parsed = JSON.parse(raw);
-    return {
-      ...emptyUser(chatId),
-      ...parsed,
-      chatId: String(parsed.chatId || chatId),
-      banned: Boolean(parsed.banned),
-      note: typeof parsed.note === "string" ? parsed.note : "",
-    };
+    return normalizeUser(chatId, parsed);
   } catch (err) {
     console.warn(`getUser failed for ${chatId}: ${err.message}`);
     return null;
@@ -65,6 +89,7 @@ async function rememberUserInIndex(env, profile) {
       firstName: profile.firstName || null,
       lastSeenAt: profile.lastSeenAt || new Date().toISOString(),
       banned: Boolean(profile.banned),
+      vip: Boolean(profile.vip),
     };
     list = [entry, ...list.filter((item) => String(item.chatId) !== entry.chatId)].slice(
       0,
@@ -85,14 +110,10 @@ async function putUser(env, profile) {
   if (!kv || !profile?.chatId) {
     return null;
   }
-  const next = {
-    ...emptyUser(profile.chatId),
+  const next = normalizeUser(profile.chatId, {
     ...profile,
-    chatId: String(profile.chatId),
-    banned: Boolean(profile.banned),
-    note: typeof profile.note === "string" ? profile.note : "",
     updatedAt: new Date().toISOString(),
-  };
+  });
   await putKv(kv, userKey(next.chatId), JSON.stringify(next));
   await rememberUserInIndex(env, next);
   return next;
@@ -132,16 +153,81 @@ async function touchUser(env, from, chat = null) {
   }
 }
 
-async function updateUserFlags(env, chatId, { banned, note } = {}) {
+async function updateUserFlags(env, chatId, { banned, note, vip, dailyDownloadLimit } = {}) {
   const existing = (await getUser(env, chatId)) || emptyUser(chatId);
   if (typeof banned === "boolean") {
     existing.banned = banned;
   }
+  if (typeof vip === "boolean") {
+    existing.vip = vip;
+  }
   if (typeof note === "string") {
     existing.note = note.slice(0, 500);
   }
+  if (dailyDownloadLimit === null || dailyDownloadLimit === "") {
+    existing.dailyDownloadLimit = null;
+  } else if (dailyDownloadLimit != null && Number.isFinite(Number(dailyDownloadLimit))) {
+    existing.dailyDownloadLimit = Math.max(0, Number(dailyDownloadLimit));
+  }
   existing.lastSeenAt = existing.lastSeenAt || new Date().toISOString();
   return putUser(env, existing);
+}
+
+function resolveDailyLimit(env, user) {
+  if (user?.vip || isAdminUser(env, user?.chatId)) {
+    return null;
+  }
+  if (user?.dailyDownloadLimit != null && Number.isFinite(Number(user.dailyDownloadLimit))) {
+    return Number(user.dailyDownloadLimit);
+  }
+  return getDefaultDailyDownloadLimit(env);
+}
+
+/**
+ * Reserve `amount` downloads against the user's daily quota.
+ * Returns { ok, remaining, limit, used, user } — ok=false when over quota.
+ */
+async function checkAndConsumeQuota(env, chatId, amount = 1) {
+  const needed = Math.max(1, Number(amount) || 1);
+  let user = (await getUser(env, chatId)) || emptyUser(chatId);
+  const day = utcDayKey();
+  if (!user.downloadsToday || user.downloadsToday.day !== day) {
+    user.downloadsToday = { day, count: 0 };
+  }
+  const limit = resolveDailyLimit(env, user);
+  if (limit == null) {
+    user.downloadsToday.count += needed;
+    try {
+      user = (await putUser(env, user)) || user;
+    } catch (_) {
+      // best effort
+    }
+    return { ok: true, unlimited: true, remaining: null, limit: null, used: user.downloadsToday.count, user };
+  }
+  if (user.downloadsToday.count + needed > limit) {
+    return {
+      ok: false,
+      unlimited: false,
+      remaining: Math.max(0, limit - user.downloadsToday.count),
+      limit,
+      used: user.downloadsToday.count,
+      user,
+    };
+  }
+  user.downloadsToday.count += needed;
+  try {
+    user = (await putUser(env, user)) || user;
+  } catch (_) {
+    // best effort
+  }
+  return {
+    ok: true,
+    unlimited: false,
+    remaining: Math.max(0, limit - user.downloadsToday.count),
+    limit,
+    used: user.downloadsToday.count,
+    user,
+  };
 }
 
 async function listKvKeys(kv, prefix, limit = 200) {
@@ -183,6 +269,7 @@ async function listKnownUsers(env, { limit = 50, bannedOnly = false } = {}) {
             firstName: item.firstName || null,
             lastSeenAt: item.lastSeenAt || null,
             banned: Boolean(item.banned),
+            vip: Boolean(item.vip),
             source: "index",
             hasProfile: true,
           });
@@ -210,6 +297,7 @@ async function listKnownUsers(env, { limit = 50, bannedOnly = false } = {}) {
         firstName: user.firstName,
         lastSeenAt: user.lastSeenAt,
         banned: user.banned,
+        vip: user.vip,
         note: user.note || "",
         source: "profile",
         hasProfile: true,
@@ -257,4 +345,6 @@ export {
   updateUserFlags,
   listKnownUsers,
   rememberUserInIndex,
+  resolveDailyLimit,
+  checkAndConsumeQuota,
 };

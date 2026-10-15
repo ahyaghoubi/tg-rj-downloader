@@ -9,6 +9,20 @@ import {
 import { sendMessage, sendTrackToUser } from "../telegram/send.js";
 import { presentArtistMenu, enqueueBulkDelivery } from "./artist-menu.js";
 import { incrementStat } from "../admin/stats.js";
+import { checkAndConsumeQuota } from "../admin/users.js";
+
+async function ensureQuota(env, chatId, amount, token) {
+  const quota = await checkAndConsumeQuota(env, chatId, amount);
+  if (quota.ok) {
+    return true;
+  }
+  await sendMessage(
+    chatId,
+    `سهمیهٔ دانلود روزانه تمام شده است (${quota.used}/${quota.limit}). فردا دوباره تلاش کنید یا با ادمین تماس بگیرید.`,
+    token
+  );
+  return false;
+}
 
 async function handleUrl(userId, url, env, origin) {
   try {
@@ -81,6 +95,10 @@ async function handleUrl(userId, url, env, origin) {
       mediaType,
       urls,
     };
+
+    if (!(await ensureQuota(env, userId, 1, getBotToken(env)))) {
+      return;
+    }
 
     try {
       await sendTrackToUser(userId, track, env, { preferUrl: true, cacheUploads: true });

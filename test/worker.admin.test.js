@@ -316,6 +316,69 @@ test("admin dlq events endpoint returns recorded events", async () => {
   assert.equal(body.events[0].chatId, "224032101");
 });
 
+test("quota blocks downloads and VIP bypasses limit", async () => {
+  const { checkAndConsumeQuota, updateUserFlags } = await import("../src/admin/users.js");
+  const env = adminEnv({ DEFAULT_DAILY_DOWNLOAD_LIMIT: "2" });
+  await updateUserFlags(env, "55", { banned: false });
+  assert.equal((await checkAndConsumeQuota(env, "55", 1)).ok, true);
+  assert.equal((await checkAndConsumeQuota(env, "55", 1)).ok, true);
+  assert.equal((await checkAndConsumeQuota(env, "55", 1)).ok, false);
+  await updateUserFlags(env, "55", { vip: true });
+  assert.equal((await checkAndConsumeQuota(env, "55", 5)).ok, true);
+});
+
+test("admin force-send and deep-link endpoints work", async () => {
+  const env = adminEnv({ BOT_USERNAME: "rjdlbot" });
+  const bodies = [];
+  const fetchMock = mockFetch(({ url, init }) => {
+    if (url.startsWith("https://api.telegram.org/")) {
+      bodies.push(init.body);
+      return new Response(JSON.stringify({ ok: true, result: { audio: { file_id: "x" } } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/api/p/mp3?")) {
+      return new Response(
+        JSON.stringify({
+          permlink: "Ebi-One",
+          song: "One",
+          artist: "Ebi",
+          link: "https://cdn.example.com/media/mp3/mp3-320/Ebi-One.mp3",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("{}", { status: 200 });
+  });
+  try {
+    const cookie = await sessionCookie(env);
+    const send = await worker.fetch(
+      new Request("https://worker.test/admin/api/send-song", {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId: "224032101", permlink: "Ebi-One" }),
+      }),
+      env,
+      createMockCtx()
+    );
+    assert.equal(send.status, 200);
+    const deep = await worker.fetch(
+      new Request("https://worker.test/admin/api/deep-link", {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "s", value: "Ebi-One" }),
+      }),
+      env,
+      createMockCtx()
+    );
+    const deepBody = await deep.json();
+    assert.match(deepBody.url, /t\.me\/rjdlbot\?start=s_Ebi-One/);
+  } finally {
+    fetchMock.restore();
+  }
+});
+
 test("admin overview includes webhook and today stats", async () => {
   const env = adminEnv();
   const { incrementStat } = await import("../src/admin/stats.js");

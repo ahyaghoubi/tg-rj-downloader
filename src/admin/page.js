@@ -142,19 +142,49 @@ function renderAdminPage() {
     </section>
 
     <section>
-      <h2>رویدادهای DLQ</h2>
-      <div class="row"><button type="button" id="btnLoadDlq">بارگذاری</button></div>
+      <h2>ارسال اجباری آهنگ / دیپ‌لینک</h2>
+      <div class="row">
+        <label>chatId</label>
+        <input id="sendChatId" placeholder="224032101" />
+        <label>permlink</label>
+        <input id="sendPermlink" placeholder="Chaartaar-Gele-Kon" style="min-width:200px" />
+        <button type="button" id="btnForceSend">ارسال آهنگ</button>
+      </div>
+      <div class="row">
+        <label>type</label>
+        <select id="deepType"><option value="s">song</option><option value="a">artist</option><option value="p">playlist</option><option value="b">album</option></select>
+        <label>value</label>
+        <input id="deepValue" placeholder="Chaartaar-Gele-Kon" style="min-width:200px" />
+        <button type="button" class="secondary" id="btnDeepLink">ساخت لینک</button>
+      </div>
+      <pre id="toolsOut" class="muted"></pre>
+    </section>
+
+    <section>
+      <h2>رویدادهای DLQ / خطا / Audit</h2>
+      <div class="row">
+        <button type="button" id="btnLoadDlq">DLQ</button>
+        <button type="button" class="secondary" id="btnLoadErrors">خطاها</button>
+        <button type="button" class="secondary" id="btnLoadAudit">Audit</button>
+      </div>
       <pre id="dlqOut" class="muted"></pre>
     </section>
 
     <section>
-      <h2>کاربر / پیام</h2>
+      <h2>کاربر / پیام / VIP / سهمیه</h2>
       <div class="row">
         <label>chatId</label>
         <input id="userChatId" placeholder="224032101" />
         <button type="button" id="btnLoadUser">بارگذاری</button>
         <button type="button" class="danger" id="btnBan">بن</button>
         <button type="button" class="secondary" id="btnUnban">آن‌بن</button>
+        <button type="button" id="btnVipOn">VIP</button>
+        <button type="button" class="secondary" id="btnVipOff">عادی</button>
+      </div>
+      <div class="row">
+        <label>سقف روزانه (خالی=پیش‌فرض)</label>
+        <input id="userDailyLimit" type="number" min="0" placeholder="مثلاً 20" style="min-width:120px" />
+        <button type="button" class="secondary" id="btnSaveQuota">ذخیره سهمیه</button>
       </div>
       <div class="row" style="align-items:stretch">
         <textarea id="userNote" placeholder="یادداشت ادمین…"></textarea>
@@ -208,13 +238,18 @@ function renderAdminPage() {
         ["queue delay", c.queueDelaySeconds + "s"],
         ["progress every", String(c.progressEvery)],
         ["admin ids", (c.adminUserIds || []).join(", ") || "(none)"],
+        ["daily download limit", String(c.defaultDailyDownloadLimit)],
         ["today songs", String(t.songs || 0)],
         ["today artists", String(t.artists || 0)],
         ["today searches", String(t.searches || 0)],
         ["today messages", String(t.messages || 0)],
       ];
       $("systemGrid").innerHTML = rows.map(([k,v]) => "<div><span>"+k+"</span><span>"+String(v)+"</span></div>").join("");
-      $("statsOut").textContent = JSON.stringify(data.recentStats || [], null, 2);
+      $("statsOut").textContent = JSON.stringify({
+        recentStats: data.recentStats || [],
+        recentErrors: data.recentErrors || [],
+        recentAudit: data.recentAudit || [],
+      }, null, 2);
     }
     function renderUsers(users) {
       if (!users.length) {
@@ -223,7 +258,9 @@ function renderAdminPage() {
       }
       $("usersBody").innerHTML = users.map((u) => {
         const name = u.username ? "@"+u.username : (u.firstName || "—");
-        const status = u.banned ? '<span class="bad">banned</span>' : '<span class="ok">ok</span>';
+        const status = u.banned
+          ? '<span class="bad">banned</span>'
+          : (u.vip ? '<span class="ok">vip</span>' : '<span class="ok">ok</span>');
         return '<tr data-chat="'+u.chatId+'"><td class="ltr">'+u.chatId+'</td><td>'+name+'</td><td class="ltr">'+(u.lastSeenAt || "—")+'</td><td>'+status+'</td><td>'+u.source+'</td></tr>';
       }).join("");
       [...$("usersBody").querySelectorAll("tr[data-chat]")].forEach((tr) => {
@@ -250,6 +287,9 @@ function renderAdminPage() {
       $("jobOut").textContent = JSON.stringify({ active: data.active, pending: data.pending, cancel: data.cancel }, null, 2);
       $("userOut").textContent = JSON.stringify({ user: data.user, recents: data.recents }, null, 2);
       if (data.user?.note) $("userNote").value = data.user.note;
+      if (data.user?.dailyDownloadLimit != null) $("userDailyLimit").value = data.user.dailyDownloadLimit;
+      else $("userDailyLimit").value = "";
+      if (!$("sendChatId").value) $("sendChatId").value = chatId;
       return data;
     }
     $("btnLoadUsers").onclick = async () => { try { await loadUsers(false); } catch (e) { $("usersBody").innerHTML = '<tr><td colspan="5">'+e.message+'</td></tr>'; } };
@@ -294,25 +334,64 @@ function renderAdminPage() {
         $("dlqOut").textContent = JSON.stringify(data.events || [], null, 2);
       } catch (e) { $("dlqOut").textContent = e.message; }
     };
+    $("btnLoadErrors").onclick = async () => {
+      try {
+        const data = await api("/admin/api/errors");
+        $("dlqOut").textContent = JSON.stringify(data.events || [], null, 2);
+      } catch (e) { $("dlqOut").textContent = e.message; }
+    };
+    $("btnLoadAudit").onclick = async () => {
+      try {
+        const data = await api("/admin/api/audit");
+        $("dlqOut").textContent = JSON.stringify(data.events || [], null, 2);
+      } catch (e) { $("dlqOut").textContent = e.message; }
+    };
+    $("btnForceSend").onclick = async () => {
+      try {
+        const data = await api("/admin/api/send-song", {
+          method: "POST",
+          body: JSON.stringify({ chatId: $("sendChatId").value.trim(), permlink: $("sendPermlink").value.trim() }),
+        });
+        $("toolsOut").textContent = JSON.stringify(data, null, 2);
+      } catch (e) { $("toolsOut").textContent = e.message; }
+    };
+    $("btnDeepLink").onclick = async () => {
+      try {
+        const data = await api("/admin/api/deep-link", {
+          method: "POST",
+          body: JSON.stringify({ type: $("deepType").value, value: $("deepValue").value.trim() }),
+        });
+        $("toolsOut").textContent = JSON.stringify(data, null, 2);
+      } catch (e) { $("toolsOut").textContent = e.message; }
+    };
     $("btnLoadUser").onclick = async () => {
       try { $("jobChatId").value = $("userChatId").value.trim(); await loadChat(); }
       catch (e) { $("userOut").textContent = e.message; }
     };
-    async function setBan(banned) {
+    async function patchUser(extra) {
       const data = await api("/admin/api/user", {
         method: "POST",
-        body: JSON.stringify({ chatId: $("userChatId").value.trim(), banned, note: $("userNote").value }),
+        body: JSON.stringify({
+          chatId: $("userChatId").value.trim(),
+          note: $("userNote").value,
+          ...extra,
+        }),
       });
       $("userOut").textContent = JSON.stringify(data, null, 2);
       await loadUsers(false);
     }
-    $("btnBan").onclick = async () => { try { await setBan(true); } catch (e) { $("userOut").textContent = e.message; } };
-    $("btnUnban").onclick = async () => { try { await setBan(false); } catch (e) { $("userOut").textContent = e.message; } };
-    $("btnSaveNote").onclick = async () => {
+    $("btnBan").onclick = async () => { try { await patchUser({ banned: true }); } catch (e) { $("userOut").textContent = e.message; } };
+    $("btnUnban").onclick = async () => { try { await patchUser({ banned: false }); } catch (e) { $("userOut").textContent = e.message; } };
+    $("btnVipOn").onclick = async () => { try { await patchUser({ vip: true }); } catch (e) { $("userOut").textContent = e.message; } };
+    $("btnVipOff").onclick = async () => { try { await patchUser({ vip: false }); } catch (e) { $("userOut").textContent = e.message; } };
+    $("btnSaveQuota").onclick = async () => {
       try {
-        const data = await api("/admin/api/user", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim(), note: $("userNote").value }) });
-        $("userOut").textContent = JSON.stringify(data, null, 2);
+        const raw = $("userDailyLimit").value.trim();
+        await patchUser({ dailyDownloadLimit: raw === "" ? null : Number(raw) });
       } catch (e) { $("userOut").textContent = e.message; }
+    };
+    $("btnSaveNote").onclick = async () => {
+      try { await patchUser({}); } catch (e) { $("userOut").textContent = e.message; }
     };
     $("btnMessage").onclick = async () => {
       try {

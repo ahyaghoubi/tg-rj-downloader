@@ -26,12 +26,16 @@ import {
 import { renderAdminPage, renderLoginPage } from "./page.js";
 import { readDlqEvents } from "./dlq-log.js";
 import { readDailyStats, readRecentDailyStats } from "./stats.js";
+import { recordAdminAudit, readAdminErrors, readAdminAudit } from "./ops-log.js";
+import { makeStartPayload, buildBotStartLink } from "../bot/start-payload.js";
+import { resolveDownloadUrls } from "../rj/tracks.js";
+import { sendTrackToUser } from "../telegram/send.js";
 import {
   getCachedTelegramFile,
   deleteCachedTelegramFile,
   getTelegramFileCacheKey,
 } from "../cache/telegram-file.js";
-import { getFileCacheStore } from "../config.js";
+import { getFileCacheStore, getDefaultDailyDownloadLimit } from "../config.js";
 
 function jsonResponse(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -145,9 +149,11 @@ async function handleOverview(env) {
     botError = "BOT_TOKEN not configured";
   }
 
-  const [today, recentStats] = await Promise.all([
+  const [today, recentStats, errors, audit] = await Promise.all([
     readDailyStats(env),
     readRecentDailyStats(env, 7),
+    readAdminErrors(env),
+    readAdminAudit(env),
   ]);
 
   return jsonResponse({
@@ -163,6 +169,8 @@ async function handleOverview(env) {
     webhook,
     today,
     recentStats,
+    recentErrors: errors.slice(0, 10),
+    recentAudit: audit.slice(0, 10),
     config: {
       artistQueue: ARTIST_DELIVERY_QUEUE_NAME,
       artistDlq: ARTIST_DELIVERY_DLQ_NAME,
@@ -170,6 +178,7 @@ async function handleOverview(env) {
       queueDelaySeconds: getArtistQueueDelaySeconds(env),
       progressEvery: getArtistProgressEvery(env),
       maxAudioUrlAttempts: getMaxAudioUrlAttempts(env),
+      defaultDailyDownloadLimit: getDefaultDailyDownloadLimit(env),
       adminUserIds: getAdminUserIds(env),
       hasArtistQueue: Boolean(env.ARTIST_QUEUE),
       hasJobStore: Boolean(getJobStore(env)),
@@ -275,6 +284,7 @@ async function handleAdminRequest(request, env, ctx) {
       return jsonResponse({ ok: false, error: "chatId required" }, 400);
     }
     const result = await cancelChatArtistDelivery(env, String(chatId));
+    await recordAdminAudit(env, { action: "chat.cancel", chatId, detail: result.activeArtist });
     return jsonResponse({ ok: true, ...result, chatId: String(chatId) });
   }
 
@@ -284,7 +294,9 @@ async function handleAdminRequest(request, env, ctx) {
     if (!chatId) {
       return jsonResponse({ ok: false, error: "chatId required" }, 400);
     }
-    return handleClearPending(env, String(chatId));
+    const result = await handleClearPending(env, String(chatId));
+    await recordAdminAudit(env, { action: "chat.clear-pending", chatId });
+    return result;
   }
 
   if (path === "/admin/api/warm" && request.method === "POST") {
@@ -298,6 +310,7 @@ async function handleAdminRequest(request, env, ctx) {
       return jsonResponse({ ok: false, error: "ARTIST_QUEUE is not configured" }, 500);
     }
     ctx.waitUntil(warmArtistMissingTracks(env, String(chatId), artistName));
+    await recordAdminAudit(env, { action: "warm", chatId, detail: artistName });
     return jsonResponse({
       ok: true,
       mode: "warm-missing-only",
@@ -318,11 +331,30 @@ async function handleAdminRequest(request, env, ctx) {
     } else if (body.banned === "true" || body.banned === "false") {
       patch.banned = body.banned === "true";
     }
+    if (typeof body.vip === "boolean") {
+      patch.vip = body.vip;
+    } else if (body.vip === "true" || body.vip === "false") {
+      patch.vip = body.vip === "true";
+    }
     if (typeof body.note === "string") {
       patch.note = body.note;
     }
+    if (body.dailyDownloadLimit === null || body.dailyDownloadLimit === "") {
+      patch.dailyDownloadLimit = null;
+    } else if (body.dailyDownloadLimit != null) {
+      patch.dailyDownloadLimit = Number(body.dailyDownloadLimit);
+    }
     try {
       const user = await updateUserFlags(env, String(chatId), patch);
+      await recordAdminAudit(env, {
+        action: "user.update",
+        chatId,
+        detail: JSON.stringify({
+          banned: user.banned,
+          vip: user.vip,
+          dailyDownloadLimit: user.dailyDownloadLimit,
+        }),
+      });
       return jsonResponse({ ok: true, user });
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 500);
@@ -338,10 +370,60 @@ async function handleAdminRequest(request, env, ctx) {
     }
     try {
       await sendMessage(chatId, text, getBotToken(env));
+      await recordAdminAudit(env, { action: "message", chatId, detail: text.slice(0, 80) });
       return jsonResponse({ ok: true, chatId: String(chatId) });
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 500);
     }
+  }
+
+  if (path === "/admin/api/send-song" && request.method === "POST") {
+    const body = await readJsonOrForm(request);
+    const chatId = body.chatId;
+    const permlink = String(body.permlink || "").trim();
+    if (!chatId || !permlink) {
+      return jsonResponse({ ok: false, error: "chatId and permlink required" }, 400);
+    }
+    try {
+      const resolved = await resolveDownloadUrls(env, "song", permlink);
+      if (!resolved.urls?.length) {
+        return jsonResponse({ ok: false, error: "No download URLs for song" }, 404);
+      }
+      const track = {
+        permlink,
+        title: resolved.title || permlink,
+        artist: resolved.artist || "",
+        duration: resolved.duration || null,
+        mediaType: "song",
+        urls: resolved.urls,
+      };
+      await sendTrackToUser(chatId, track, env, { preferUrl: true, cacheUploads: true });
+      await recordAdminAudit(env, { action: "send-song", chatId, detail: permlink });
+      return jsonResponse({ ok: true, chatId: String(chatId), permlink });
+    } catch (err) {
+      return jsonResponse({ ok: false, error: err.message }, 500);
+    }
+  }
+
+  if (path === "/admin/api/deep-link" && request.method === "POST") {
+    const body = await readJsonOrForm(request);
+    const type = String(body.type || "s").trim();
+    const value = String(body.value || "").trim();
+    if (!value) {
+      return jsonResponse({ ok: false, error: "value required" }, 400);
+    }
+    const payload = await makeStartPayload(env, type, value);
+    const url = await buildBotStartLink(env, type, value);
+    await recordAdminAudit(env, { action: "deep-link", detail: `${type}:${value}` });
+    return jsonResponse({ ok: true, type, value, payload, url });
+  }
+
+  if (path === "/admin/api/errors" && request.method === "GET") {
+    return jsonResponse({ ok: true, events: await readAdminErrors(env) });
+  }
+
+  if (path === "/admin/api/audit" && request.method === "GET") {
+    return jsonResponse({ ok: true, events: await readAdminAudit(env) });
   }
 
   if (path === "/admin/api/users" && request.method === "GET") {
@@ -399,6 +481,7 @@ async function handleAdminRequest(request, env, ctx) {
     if (!body.quality) {
       await deleteCachedTelegramFile(env, { permlink, mediaType: "song" }, "256");
     }
+    await recordAdminAudit(env, { action: "cache.delete", detail: permlink });
     return jsonResponse({ ok: true, permlink, quality: body.quality || "320+256" });
   }
 

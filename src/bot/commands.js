@@ -198,7 +198,17 @@ async function handleStatusCommand(chatId, userId, env) {
     `پرچم لغو: ${cancel ? "بله" : "خیر"}`,
     `ادمین‌ها: ${getAdminUserIds(env).join(", ") || "(هیچ)"}`,
   ];
-  await sendMessage(chatId, lines.join("\n"), token);
+  await sendMessage(chatId, lines.join("\n"), token, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "🔄 بروزرسانی", callback_data: "st:refresh" },
+          { text: "⏹ لغو فعال", callback_data: "st:cancel" },
+        ],
+        [{ text: "🧹 پاک کردن pending", callback_data: "st:clear" }],
+      ],
+    },
+  });
 }
 
 export {
