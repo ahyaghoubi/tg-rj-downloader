@@ -91,11 +91,13 @@ export {
 export { TelegramRateLimitError, callTelegram } from "./telegram/api.js";
 export { sendTrackToUser } from "./telegram/send.js";
 export {
+  artistNamesEqual,
   buildFallbackUrls,
   extractArtistName,
   extractLinkFromMessage,
   getMp3QualityRank,
   hostnameOf,
+  normalizeArtistName,
   normalizeInput,
   orderSongUrls,
   parseMediaFromUrl,

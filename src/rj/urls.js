@@ -89,6 +89,23 @@ function decodePathSegment(value) {
   }
 }
 
+/** Decode artist names from URLs or stale KV locks (may still be percent-encoded). */
+function normalizeArtistName(value) {
+  let current = String(value || "").trim();
+  for (let i = 0; i < 3; i++) {
+    const next = decodePathSegment(current);
+    if (next === current) {
+      break;
+    }
+    current = next;
+  }
+  return current;
+}
+
+function artistNamesEqual(a, b) {
+  return normalizeArtistName(a).toLowerCase() === normalizeArtistName(b).toLowerCase();
+}
+
 function parseMediaFromUrl(link) {
   const parsed = new URL(link);
   const segments = parsed.pathname.split("/").filter(Boolean);
@@ -362,6 +379,8 @@ export {
   collectRawUrlsFromTrack,
   resolveSongUrls,
   decodePathSegment,
+  normalizeArtistName,
+  artistNamesEqual,
   parseMediaFromUrl,
   extractArtistName,
   buildFallbackUrls,

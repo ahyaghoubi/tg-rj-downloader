@@ -15,6 +15,7 @@ import {
   queueChatCancelKey,
   userRecentKey,
 } from "../config.js";
+import { normalizeArtistName } from "../rj/urls.js";
 import { sendMessage } from "../telegram/send.js";
 import { makeCallbackData } from "./callback-store.js";
 
@@ -73,7 +74,7 @@ async function cancelChatArtistDelivery(env, chatId) {
   try {
     const activeRaw = await kv.get(queueChatActiveKey(chatId));
     if (activeRaw) {
-      activeArtist = JSON.parse(activeRaw)?.artistName || null;
+      activeArtist = normalizeArtistName(JSON.parse(activeRaw)?.artistName || "") || null;
     }
   } catch (_) {
     // ignore
@@ -175,8 +176,8 @@ async function handleStatusCommand(chatId, userId, env) {
     `نوشتن انبوه کش: ${shouldCacheArtistUploads(env)}`,
     `تأخیر صف: ${getArtistQueueDelaySeconds(env)}ث`,
     `بازهٔ پیشرفت: ${getArtistProgressEvery(env)}`,
-    `فعال: ${active ? `${active.artistName} (${active.total || "?"})` : "هیچ"}`,
-    `در انتظار: ${pending ? `${pending.artistName} (${pending.total || pending.tracks?.length || "?"})` : "هیچ"}`,
+    `فعال: ${active ? `${normalizeArtistName(active.artistName)} (${active.total || "?"})` : "هیچ"}`,
+    `در انتظار: ${pending ? `${normalizeArtistName(pending.artistName)} (${pending.total || pending.tracks?.length || "?"})` : "هیچ"}`,
     `پرچم لغو: ${cancel ? "بله" : "خیر"}`,
     `ادمین‌ها: ${getAdminUserIds(env).join(", ") || "(هیچ)"}`,
   ];

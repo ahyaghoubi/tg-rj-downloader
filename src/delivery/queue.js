@@ -11,6 +11,7 @@ import {
   queueChatCancelKey,
   shouldCacheArtistUploads,
 } from "../config.js";
+import { artistNamesEqual, normalizeArtistName } from "../rj/urls.js";
 import { sendMessage, sendTrackToUser } from "../telegram/send.js";
 import { TelegramRateLimitError } from "../telegram/api.js";
 
@@ -29,7 +30,7 @@ function compactQueuedTrack(track) {
 function createQueuedArtistPayload(chatId, artistName, tracks, options = {}) {
   const payload = {
     chatId,
-    artistName,
+    artistName: normalizeArtistName(artistName),
     tracks: tracks.map(compactQueuedTrack),
     total: tracks.length,
     nextIndex: 0,
@@ -48,10 +49,11 @@ function createQueuedArtistPayload(chatId, artistName, tracks, options = {}) {
 }
 
 function normalizeQueuePayload(body) {
-  if (typeof body === "string") {
-    return JSON.parse(body);
+  const payload = typeof body === "string" ? JSON.parse(body) : body;
+  if (payload?.artistName) {
+    payload.artistName = normalizeArtistName(payload.artistName);
   }
-  return body;
+  return payload;
 }
 
 async function enqueueArtistQueueMessage(env, payload, options = {}) {
@@ -63,6 +65,7 @@ async function enqueueArtistQueueMessage(env, payload, options = {}) {
 
 async function enqueueArtistQueueDelivery(env, chatId, artistName, tracks, options = {}) {
   const token = getBotToken(env);
+  artistName = normalizeArtistName(artistName);
   const payload = createQueuedArtistPayload(chatId, artistName, tracks, options);
   const kv = getJobStore(env);
   const label = payload.warmCache ? "گرم‌کردن کش" : "ارسال";
@@ -72,12 +75,12 @@ async function enqueueArtistQueueDelivery(env, chatId, artistName, tracks, optio
     if (activeRaw) {
       let activeArtist = null;
       try {
-        activeArtist = JSON.parse(activeRaw)?.artistName || null;
+        activeArtist = normalizeArtistName(JSON.parse(activeRaw)?.artistName || "") || null;
       } catch (_) {
         // ignore
       }
 
-      if (activeArtist && String(activeArtist).toLowerCase() === String(artistName).toLowerCase()) {
+      if (activeArtist && artistNamesEqual(activeArtist, artistName)) {
         await sendMessage(
           chatId,
           `ارسال ${artistName} همین حالا در حال انجام است و ادامه پیدا می‌کند. برای توقف /cancel را بفرستید.`,
@@ -201,7 +204,11 @@ async function finishQueueChatDelivery(env, payload) {
       let shouldClear = true;
       try {
         const active = JSON.parse(activeRaw);
-        if (active?.artistName && payload.artistName && active.artistName !== payload.artistName) {
+        if (
+          active?.artistName &&
+          payload.artistName &&
+          !artistNamesEqual(active.artistName, payload.artistName)
+        ) {
           shouldClear = false;
         }
       } catch (_) {

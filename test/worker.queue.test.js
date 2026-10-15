@@ -307,6 +307,33 @@ test("enqueueArtistQueueDelivery serializes a second artist for the same chat", 
   }
 });
 
+test("enqueueArtistQueueDelivery treats encoded active lock as same artist", async () => {
+  const telegram = mockTelegramFetch();
+  const env = createEnv();
+  env.ARTIST_JOB_STORE.store.set(
+    "artist-queue-active:v1:224032101",
+    JSON.stringify({
+      artistName: "Kamran%20%26%20Hooman",
+      total: 46,
+      startedAt: new Date().toISOString(),
+    })
+  );
+
+  try {
+    await enqueueArtistQueueDelivery(env, "224032101", "Kamran & Hooman", [
+      { permlink: "Kamran-Hooman-One", title: "One", mediaType: "song" },
+    ]);
+
+    assert.equal(env.queueMessages.length, 0);
+    assert.equal(env.ARTIST_JOB_STORE.store.has("artist-queue-pending:v1:224032101"), false);
+    assert.match(telegram.calls.at(-1).init.body, /Kamran & Hooman/);
+    assert.match(telegram.calls.at(-1).init.body, /همین حالا در حال انجام است/);
+    assert.doesNotMatch(telegram.calls.at(-1).init.body, /%20/);
+  } finally {
+    telegram.restore();
+  }
+});
+
 test("warm queue payloads force cache writes when sending tracks", async () => {
   const telegram = mockTelegramFetch({ fileId: "warm-file-id" });
   const env = createEnv({ ENABLE_BULK_CACHE_WRITES: "false" });

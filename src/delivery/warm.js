@@ -1,4 +1,5 @@
 import { getBotToken } from "../config.js";
+import { normalizeArtistName } from "../rj/urls.js";
 import { fetchArtistTracks } from "../rj/tracks.js";
 import { filterUncachedTracks } from "../cache/telegram-file.js";
 import { sendMessage } from "../telegram/send.js";
@@ -6,6 +7,7 @@ import { enqueueArtistQueueDelivery } from "./queue.js";
 
 async function warmArtistMissingTracks(env, chatId, artistName) {
   const token = getBotToken(env);
+  artistName = normalizeArtistName(artistName);
   try {
     const tracks = await fetchArtistTracks(env, artistName);
     if (!tracks.length) {

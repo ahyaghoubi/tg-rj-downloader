@@ -3,10 +3,12 @@ import test from "node:test";
 
 import {
   buildFallbackUrls,
+  artistNamesEqual,
   extractArtistName,
   extractLinkFromMessage,
   getMp3QualityRank,
   hostnameOf,
+  normalizeArtistName,
   normalizeInput,
   orderSongUrls,
   parseMediaFromUrl,
@@ -49,6 +51,8 @@ test("parseMediaFromUrl and extractArtistName parse expected URL shapes", () => 
     extractArtistName("https://play.radiojavan.com/artist/Kamran%20&%20Hooman"),
     "Kamran & Hooman"
   );
+  assert.equal(normalizeArtistName("Kamran%20%26%20Hooman"), "Kamran & Hooman");
+  assert.equal(artistNamesEqual("Kamran%20%26%20Hooman", "Kamran & Hooman"), true);
   assert.throws(() => parseMediaFromUrl("https://play.radiojavan.com/song"), /Invalid URL format/);
 });
 

@@ -8,6 +8,7 @@ import {
 import { processUpdate } from "../bot/update.js";
 import { handleUrl } from "../bot/handle-url.js";
 import { warmArtistMissingTracks } from "../delivery/warm.js";
+import { normalizeArtistName } from "../rj/urls.js";
 
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -74,12 +75,13 @@ async function handleHttpRequest(request, env, ctx) {
       return new Response("ARTIST_QUEUE is not configured", { status: 500 });
     }
 
-    ctx.waitUntil(warmArtistMissingTracks(env, String(chatId), String(artistName)));
+    artistName = normalizeArtistName(artistName);
+    ctx.waitUntil(warmArtistMissingTracks(env, String(chatId), artistName));
     return jsonResponse({
       ok: true,
       mode: "warm-missing-only",
       chatId: String(chatId),
-      artistName: String(artistName),
+      artistName,
     });
   }
 
