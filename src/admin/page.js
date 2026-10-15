@@ -372,10 +372,6 @@ function renderAdminPage() {
         <div class="field"><label for="cfgProgress">Progress every</label><input id="cfgProgress" type="number" min="1" max="50" /></div>
         <div class="field"><label for="cfgAttempts">Max URL attempts</label><input id="cfgAttempts" type="number" min="1" max="8" /></div>
         <div class="field"><label for="cfgDailyLimit">Daily limit</label><input id="cfgDailyLimit" type="number" min="0" max="5000" /></div>
-        <div class="field">
-          <label for="cfgBulkCache">Bulk cache</label>
-          <select id="cfgBulkCache"><option value="">env</option><option value="true">on</option><option value="false">off</option></select>
-        </div>
       </div>
       <div class="row actions">
         <button type="button" id="btnSaveRuntime">Save overrides</button>
@@ -514,7 +510,6 @@ function renderAdminPage() {
         ["Webhook last error", data.webhook?.lastErrorMessage || "(none)"],
         ["Queue", c.artistQueue],
         ["DLQ", c.artistDlq],
-        ["Bulk cache writes", String(c.bulkCacheWrites)],
         ["Queue delay", c.queueDelaySeconds + "s"],
         ["Progress every", String(c.progressEvery)],
         ["Admin IDs", (c.adminUserIds || []).join(", ") || "(none)"],
@@ -539,7 +534,6 @@ function renderAdminPage() {
       $("cfgProgress").value = r.overrides?.artistProgressEvery ?? r.artistProgressEvery ?? "";
       $("cfgAttempts").value = r.overrides?.maxAudioUrlAttempts ?? r.maxAudioUrlAttempts ?? "";
       $("cfgDailyLimit").value = r.overrides?.defaultDailyDownloadLimit ?? r.defaultDailyDownloadLimit ?? "";
-      $("cfgBulkCache").value = r.overrides?.enableBulkCacheWrites == null ? "" : String(r.overrides.enableBulkCacheWrites);
       $("runtimeOut").textContent = JSON.stringify(r, null, 2);
     }
     function renderUsers(users) {
@@ -676,13 +670,11 @@ function renderAdminPage() {
     $("btnQueueResume").onclick = async () => { try { await patchRuntime({ queuePaused: false }); } catch (e) { $("runtimeOut").textContent = e.message; } };
     $("btnSaveRuntime").onclick = async () => {
       try {
-        const bulk = $("cfgBulkCache").value;
         await patchRuntime({
           artistQueueDelaySeconds: $("cfgDelay").value.trim() === "" ? null : Number($("cfgDelay").value),
           artistProgressEvery: $("cfgProgress").value.trim() === "" ? null : Number($("cfgProgress").value),
           maxAudioUrlAttempts: $("cfgAttempts").value.trim() === "" ? null : Number($("cfgAttempts").value),
           defaultDailyDownloadLimit: $("cfgDailyLimit").value.trim() === "" ? null : Number($("cfgDailyLimit").value),
-          enableBulkCacheWrites: bulk === "" ? null : bulk === "true",
         });
       } catch (e) { $("runtimeOut").textContent = e.message; }
     };
@@ -693,7 +685,6 @@ function renderAdminPage() {
           artistProgressEvery: null,
           maxAudioUrlAttempts: null,
           defaultDailyDownloadLimit: null,
-          enableBulkCacheWrites: null,
         });
       } catch (e) { $("runtimeOut").textContent = e.message; }
     };

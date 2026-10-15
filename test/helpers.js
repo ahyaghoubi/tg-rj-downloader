@@ -93,7 +93,6 @@ export function createEnv(overrides = {}) {
   return {
     BOT_TOKEN: "test-token",
     ARTIST_QUEUE_DELAY_SECONDS: "2",
-    ENABLE_BULK_CACHE_WRITES: "false",
     ARTIST_QUEUE: artistQueue,
     TELEGRAM_FILE_CACHE: createMockKv(),
     ARTIST_JOB_STORE: createMockKv(),

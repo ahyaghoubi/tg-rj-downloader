@@ -106,7 +106,7 @@ test("single-song upload writes Telegram file cache", async () => {
 test("artist delivery can read cache but skip new cache writes", async () => {
   const track = makeTrack("Ebi-NoBulkCache");
   const kv = createMockKv();
-  const env = createEnv({ TELEGRAM_FILE_CACHE: kv, ENABLE_BULK_CACHE_WRITES: "false" });
+  const env = createEnv({ TELEGRAM_FILE_CACHE: kv });
   const fetchMock = mockFetch(() => telegramResponse({ audio: { file_id: "artist-upload-id" } }));
 
   try {

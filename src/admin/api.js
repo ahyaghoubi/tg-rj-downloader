@@ -9,7 +9,6 @@ import {
   getArtistProgressEvery,
   getMaxAudioUrlAttempts,
   getDefaultDailyDownloadLimit,
-  shouldCacheArtistUploads,
   queueChatActiveKey,
   queueChatPendingKey,
   queueChatCancelKey,
@@ -180,7 +179,6 @@ async function handleOverview(env) {
     config: {
       artistQueue: ARTIST_DELIVERY_QUEUE_NAME,
       artistDlq: ARTIST_DELIVERY_DLQ_NAME,
-      bulkCacheWrites: shouldCacheArtistUploads(env),
       queueDelaySeconds: getArtistQueueDelaySeconds(env),
       progressEvery: getArtistProgressEvery(env),
       maxAudioUrlAttempts: getMaxAudioUrlAttempts(env),
@@ -470,13 +468,6 @@ async function handleAdminRequest(request, env, _ctx) {
       } else if (body[key] != null) {
         patch[key] = Number(body[key]);
       }
-    }
-    if (body.enableBulkCacheWrites === null || body.enableBulkCacheWrites === "") {
-      patch.enableBulkCacheWrites = null;
-    } else if (typeof body.enableBulkCacheWrites === "boolean") {
-      patch.enableBulkCacheWrites = body.enableBulkCacheWrites;
-    } else if (body.enableBulkCacheWrites === "true" || body.enableBulkCacheWrites === "false") {
-      patch.enableBulkCacheWrites = body.enableBulkCacheWrites === "true";
     }
     try {
       const saved = await saveRuntimeConfig(env, patch);

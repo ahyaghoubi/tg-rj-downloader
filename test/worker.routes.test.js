@@ -36,7 +36,6 @@ test("/health calls Telegram getMe when BOT_TOKEN is configured", async () => {
     assert.equal(body.bot, "testbot");
     assert.equal(body.error, null);
     assert.equal(body.artistDlq, "telegram-radiojavan-artist-delivery-dlq");
-    assert.equal(body.bulkCacheWrites, false);
     assert.match(fetchMock.calls[0].url, /getMe$/);
   } finally {
     fetchMock.restore();

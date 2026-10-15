@@ -6,7 +6,6 @@ import {
   getArtistQueueDelaySeconds,
   getArtistProgressEvery,
   getMaxAudioUrlAttempts,
-  shouldCacheArtistUploads,
   getDefaultDailyDownloadLimit,
 } from "../config.js";
 
@@ -17,7 +16,6 @@ function emptyRuntimeConfig() {
     artistQueueDelaySeconds: null,
     artistProgressEvery: null,
     maxAudioUrlAttempts: null,
-    enableBulkCacheWrites: null,
     defaultDailyDownloadLimit: null,
     updatedAt: null,
   };
@@ -32,23 +30,6 @@ function normalizeRuntimeConfig(parsed = {}) {
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
   };
-  const boolOrNull = (value) => {
-    if (value == null || value === "") {
-      return null;
-    }
-    if (typeof value === "boolean") {
-      return value;
-    }
-    if (typeof value === "string") {
-      if (/^(1|true|yes|on)$/i.test(value.trim())) {
-        return true;
-      }
-      if (/^(0|false|no|off)$/i.test(value.trim())) {
-        return false;
-      }
-    }
-    return null;
-  };
 
   return {
     ...base,
@@ -57,7 +38,6 @@ function normalizeRuntimeConfig(parsed = {}) {
     artistQueueDelaySeconds: numOrNull(parsed.artistQueueDelaySeconds),
     artistProgressEvery: numOrNull(parsed.artistProgressEvery),
     maxAudioUrlAttempts: numOrNull(parsed.maxAudioUrlAttempts),
-    enableBulkCacheWrites: boolOrNull(parsed.enableBulkCacheWrites),
     defaultDailyDownloadLimit: numOrNull(parsed.defaultDailyDownloadLimit),
     updatedAt: parsed.updatedAt || null,
   };
@@ -117,13 +97,11 @@ function effectiveConfigSnapshot(env) {
     artistQueueDelaySeconds: getArtistQueueDelaySeconds(env),
     artistProgressEvery: getArtistProgressEvery(env),
     maxAudioUrlAttempts: getMaxAudioUrlAttempts(env),
-    bulkCacheWrites: shouldCacheArtistUploads(env),
     defaultDailyDownloadLimit: getDefaultDailyDownloadLimit(env),
     overrides: {
       artistQueueDelaySeconds: runtime.artistQueueDelaySeconds,
       artistProgressEvery: runtime.artistProgressEvery,
       maxAudioUrlAttempts: runtime.maxAudioUrlAttempts,
-      enableBulkCacheWrites: runtime.enableBulkCacheWrites,
       defaultDailyDownloadLimit: runtime.defaultDailyDownloadLimit,
     },
     updatedAt: runtime.updatedAt,

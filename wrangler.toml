@@ -43,7 +43,6 @@ max_retries = 1
 max_concurrency = 1
 
 [vars]
-ENABLE_BULK_CACHE_WRITES = "false"
 ARTIST_QUEUE_DELAY_SECONDS = "2"
 MAX_AUDIO_URL_ATTEMPTS = "3"
 ARTIST_PROGRESS_EVERY = "5"

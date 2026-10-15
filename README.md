@@ -25,7 +25,7 @@ A Cloudflare Worker script that turns your Telegram bot into a Radio Javan media
 - **Telegram Upload Cache** _(optional, recommended)_  
   - Reuses Telegram's `file_id` for songs that were already uploaded, so repeated requests are resent instead of re-downloaded and re-uploaded.
   - Cache entries are keyed by lowercase permlink **and** quality, so casing variants (`Ebi-X` / `ebi-x`) share one entry. Legacy mixed-case keys are migrated on read.
-  - Large artist deliveries read from the cache but avoid writing hundreds of new cache records (`ENABLE_BULK_CACHE_WRITES=false`), which helps stay within the free Workers KV daily write limit (~1,000 writes/day).
+  - Large artist deliveries **read** existing cached `file_id`s but do not write new cache records (protects the free Workers KV daily write limit ~1,000/day). Single-song sends and warm jobs still write cache.
   - Use `POST /internal/warm-artist` to send **only uncached** songs for an artist and write those into the cache intentionally.
   - Do **not** try to cache the entire Radio Javan catalog on the free tier.
   - Invalid cached IDs are removed automatically and the song is re-uploaded.
@@ -35,7 +35,6 @@ A Cloudflare Worker script that turns your Telegram bot into a Radio Javan media
   - Each queue message enqueues the next one until every song is sent, avoiding per-song KV progress writes.
   - Serializes Queue deliveries per Telegram chat so a second artist waits instead of interleaving songs.
   - Routes messages that exhaust retries to a Dead Letter Queue and notifies the chat.
-  - Bulk cache behavior is configurable for the free Workers tier.
   - Handles Telegram `429` rate limits by reading `retry_after` and resuming later.
 
 - **Future-Proof Resolution**  
@@ -208,7 +207,6 @@ Artist delivery uses [Cloudflare Queues](https://developers.cloudflare.com/queue
    max_concurrency = 1
 
    [vars]
-   ENABLE_BULK_CACHE_WRITES = "false"
    ARTIST_QUEUE_DELAY_SECONDS = "2"
    MAX_AUDIO_URL_ATTEMPTS = "3"
    ARTIST_PROGRESS_EVERY = "5"
@@ -224,7 +222,7 @@ Artist delivery uses [Cloudflare Queues](https://developers.cloudflare.com/queue
 
    Open the ops dashboard at `https://<your-worker>.workers.dev/admin` and sign in with `ADMIN_TOKEN`.
 
-   Runtime controls on `/admin` (KV, no redeploy): allowlist mode, queue pause, safe numeric overrides (queue delay, progress every, daily limit, bulk cache writes), per-user VIP / allowlist / wipe.
+   Runtime controls on `/admin` (KV, no redeploy): allowlist mode, queue pause, safe numeric overrides (queue delay, progress every, daily limit), per-user VIP / allowlist / wipe.
 
 **Notes**
 
@@ -233,7 +231,7 @@ Artist delivery uses [Cloudflare Queues](https://developers.cloudflare.com/queue
 - Per-chat Queue locks use a couple of short-lived `ARTIST_JOB_STORE` keys so concurrent artist requests for one chat do not interleave.
 - Configure `dead_letter_queue` so stalled artist messages remain inspectable and the chat is notified instead of silently dropping.
 - Inspect queue/DLQ consumers with `bash scripts/check-dlq.sh` and watch live logs with `npx wrangler tail`.
-- `ENABLE_BULK_CACHE_WRITES=false` is recommended on the free tier. Artist deliveries still read existing cached `file_id`s, but they do not write hundreds of new cache entries.
+- Artist deliveries read existing cached `file_id`s but do not write new bulk cache entries. Single-song and warm-artist paths still write cache.
 - To warm only missing songs for one artist (and write cache for those), call `POST /internal/warm-artist` with `JOB_RUNNER_SECRET`. Stay within ~1,000 KV writes/day.
 
 Do not bulk-delete `TELEGRAM_FILE_CACHE` unless you intentionally want songs to be uploaded again.
@@ -246,7 +244,7 @@ Do not bulk-delete `TELEGRAM_FILE_CACHE` unless you intentionally want songs to 
 - **Artist delivery stops partway** — Confirm `ARTIST_QUEUE` is configured and the Queue consumer is deployed. Run `bash scripts/check-dlq.sh` and watch `wrangler tail` for `Artist delivery DLQ` messages.
 - **Artist delivery never starts** — Confirm the `ARTIST_QUEUE` binding and Wrangler deployment output for Queue consumer errors.
 - **Songs re-upload every time** — Bind `TELEGRAM_FILE_CACHE` so the bot can store and reuse Telegram `file_id`s. Keys are lowercase; legacy casing duplicates are migrated on read.
-- **Daily Workers KV put limit exceeded** — Queue mode avoids per-song KV progress writes. Keep `ENABLE_BULK_CACHE_WRITES=false` for normal artist sends. Use `/internal/warm-artist` only for shortlists. Single-song / warm cache writes may fail until Cloudflare resets the daily quota (~1,000 puts/day on free).
+- **Daily Workers KV put limit exceeded** — Queue mode avoids per-song KV progress writes. Normal artist sends do not write bulk cache entries. Use `/internal/warm-artist` only for shortlists. Single-song / warm cache writes may fail until Cloudflare resets the daily quota (~1,000 puts/day on free).
 - **403 on artist API** — Ensure `RJ_API_KEY` and `RJ_USER_AGENT` are set, or redeploy with the built-in defaults.
 
 ---
@@ -271,7 +269,7 @@ Current coverage includes:
 
 - URL normalization, Telegram message link extraction, media parsing, and 320/256 URL ordering.
 - Radio Javan artist payload extraction, duplicate removal, and video/podcast filtering.
-- Telegram `file_id` cache hits, lowercase cache keys with legacy migration, rejected cache cleanup, upload caching, disabled bulk cache writes, dead-host skipping, uncached-track filtering, and KV quota handling.
+- Telegram `file_id` cache hits, lowercase cache keys with legacy migration, rejected cache cleanup, upload caching, artist deliveries that skip bulk cache writes, dead-host skipping, uncached-track filtering, and KV quota handling.
 - Queue artist delivery payload compaction, one-song continuation, delayed requeueing, completion summaries, failed-track continuation, duplicate skips, retry behavior, per-chat serialization, warm-missing-only jobs, and DLQ handling.
 - Simulated 12-artist stress behavior without real network calls.
 - Worker routes for health, direct GET, webhook, and guarded `/internal/warm-artist`.

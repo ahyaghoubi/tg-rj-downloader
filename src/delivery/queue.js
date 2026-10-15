@@ -9,7 +9,6 @@ import {
   queueChatActiveKey,
   queueChatPendingKey,
   queueChatCancelKey,
-  shouldCacheArtistUploads,
 } from "../config.js";
 import { artistNamesEqual, normalizeArtistName } from "../rj/urls.js";
 import { sendMessage, sendTrackToUser } from "../telegram/send.js";
@@ -321,7 +320,8 @@ async function runQueuedArtistMessage(env, body) {
       await sendTrackToUser(payload.chatId, track, env, {
         preferUrl: true,
         // Warm jobs always write cache; normal artist delivery keeps free-tier bulk writes off.
-        cacheUploads: Boolean(payload.warmCache) || shouldCacheArtistUploads(env),
+        // Artist deliveries only read TELEGRAM_FILE_CACHE; writes happen for warm jobs / single songs.
+        cacheUploads: Boolean(payload.warmCache),
       });
       payload.sentTrackKeys.push(trackKey);
       payload.sent += 1;

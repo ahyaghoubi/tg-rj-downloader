@@ -337,7 +337,7 @@ test("enqueueArtistQueueDelivery treats encoded active lock as same artist", asy
 
 test("warm queue payloads force cache writes when sending tracks", async () => {
   const telegram = mockTelegramFetch({ fileId: "warm-file-id" });
-  const env = createEnv({ ENABLE_BULK_CACHE_WRITES: "false" });
+  const env = createEnv();
 
   try {
     await runQueuedArtistMessage(env, {

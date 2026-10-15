@@ -135,14 +135,6 @@ function getEnvNumber(env, key, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-function shouldCacheArtistUploads(env) {
-  const runtime = getRuntimeConfigCache(env);
-  if (runtime?.enableBulkCacheWrites != null) {
-    return Boolean(runtime.enableBulkCacheWrites);
-  }
-  return getEnvBoolean(env, "ENABLE_BULK_CACHE_WRITES", false);
-}
-
 function getArtistQueueDelaySeconds(env) {
   const runtime = getRuntimeConfigCache(env);
   if (runtime?.artistQueueDelaySeconds != null) {
@@ -281,7 +273,6 @@ export {
   getEnvString,
   getEnvBoolean,
   getEnvNumber,
-  shouldCacheArtistUploads,
   getArtistQueueDelaySeconds,
   getMaxAudioUrlAttempts,
   getArtistProgressEvery,

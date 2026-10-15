@@ -3,7 +3,6 @@ import {
   ARTIST_DELIVERY_DLQ_NAME,
   getBotToken,
   getMaxAudioUrlAttempts,
-  shouldCacheArtistUploads,
 } from "../config.js";
 import { processUpdate } from "../bot/update.js";
 import { handleUrl } from "../bot/handle-url.js";
@@ -40,7 +39,6 @@ async function handleHealth(env) {
       error: result.ok ? null : result.description,
       artistQueue: ARTIST_DELIVERY_QUEUE_NAME,
       artistDlq: ARTIST_DELIVERY_DLQ_NAME,
-      bulkCacheWrites: shouldCacheArtistUploads(env),
       maxAudioUrlAttempts: getMaxAudioUrlAttempts(env),
       ops: {
         inspectDlq: `npx wrangler tail && watch ${ARTIST_DELIVERY_DLQ_NAME}`,
