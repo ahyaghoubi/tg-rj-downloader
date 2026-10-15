@@ -6,34 +6,165 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
+const SHARED_STYLES = `
+  @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap");
+  :root {
+    color-scheme: dark;
+    --bg: #0b0f14;
+    --bg-glow: radial-gradient(1200px 500px at 10% -10%, rgba(45, 212, 191, 0.12), transparent 55%),
+               radial-gradient(900px 420px at 90% 0%, rgba(96, 165, 250, 0.10), transparent 50%),
+               var(--bg);
+    --panel: rgba(17, 24, 33, 0.88);
+    --panel-solid: #111821;
+    --text: #e8eef5;
+    --muted: #8b9aab;
+    --accent: #2dd4bf;
+    --accent-hover: #5eead4;
+    --accent-ink: #042f2e;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --border: rgba(148, 163, 184, 0.16);
+    --border-strong: rgba(148, 163, 184, 0.28);
+    --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    --radius: 14px;
+    --radius-sm: 10px;
+    --font: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--font);
+    background: var(--bg-glow);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, textarea, select { font: inherit; }
+  button {
+    border: 0;
+    border-radius: 999px;
+    padding: 0.55rem 0.95rem;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 600;
+    font-size: 0.84rem;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+  }
+  button:hover { background: var(--accent-hover); }
+  button:active { transform: translateY(1px); }
+  button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  button.secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+  }
+  button.secondary:hover { background: rgba(255,255,255,0.04); }
+  button.danger {
+    background: rgba(248, 113, 113, 0.14);
+    color: #fecaca;
+    border: 1px solid rgba(248, 113, 113, 0.35);
+  }
+  button.danger:hover { background: rgba(248, 113, 113, 0.22); }
+  input, textarea, select {
+    background: rgba(11, 15, 20, 0.75);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.55rem 0.75rem;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  input:hover, textarea:hover, select:hover { border-color: var(--border-strong); }
+  input { min-width: 140px; }
+  textarea { width: 100%; min-height: 80px; resize: vertical; line-height: 1.45; }
+  label { font-size: 0.78rem; color: var(--muted); font-weight: 500; letter-spacing: 0.01em; }
+  .ok { color: var(--ok); }
+  .bad { color: var(--danger); }
+  .muted { color: var(--muted); }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .pill.ok { background: rgba(52, 211, 153, 0.12); color: var(--ok); }
+  .pill.bad { background: rgba(248, 113, 113, 0.12); color: var(--danger); }
+  .pill.neutral { background: rgba(148, 163, 184, 0.12); color: var(--muted); }
+`;
+
 function renderLoginPage({ error = "" } = {}) {
   return `<!DOCTYPE html>
-<html lang="fa" dir="rtl">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ورود ادمین · RJ Downloader</title>
+  <title>Admin sign in · RJ Downloader</title>
   <style>
-    :root { color-scheme: dark; --bg:#0f1419; --panel:#1a222c; --text:#e7ecf1; --muted:#8b9aab; --accent:#3d8bfd; --danger:#e35d6a; --border:#2a3542; }
-    * { box-sizing: border-box; }
-    body { margin:0; min-height:100vh; display:grid; place-items:center; font-family: ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--text); }
-    form { width:min(360px,92vw); background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:1.5rem; }
-    h1 { margin:0 0 .25rem; font-size:1.15rem; }
-    p { margin:0 0 1rem; color:var(--muted); font-size:.9rem; }
-    label { display:block; font-size:.85rem; margin-bottom:.35rem; color:var(--muted); }
-    input { width:100%; padding:.65rem .75rem; border-radius:8px; border:1px solid var(--border); background:#0f1419; color:var(--text); margin-bottom:1rem; }
-    button { width:100%; padding:.7rem; border:0; border-radius:8px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
-    .err { color:var(--danger); font-size:.85rem; margin-bottom:.75rem; min-height:1.2em; }
+    ${SHARED_STYLES}
+    body { display: grid; place-items: center; padding: 1.5rem; }
+    .login {
+      width: min(400px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) + 4px);
+      padding: 1.75rem;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.35rem;
+    }
+    .brand-mark {
+      width: 2.4rem;
+      height: 2.4rem;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #2dd4bf, #60a5fa);
+      box-shadow: 0 8px 24px rgba(45, 212, 191, 0.25);
+    }
+    h1 { margin: 0; font-size: 1.2rem; font-weight: 700; letter-spacing: -0.02em; }
+    .sub { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.88rem; }
+    label { display: block; margin-bottom: 0.4rem; }
+    input {
+      width: 100%;
+      margin-bottom: 1rem;
+      padding: 0.7rem 0.85rem;
+    }
+    button { width: 100%; padding: 0.75rem; border-radius: var(--radius-sm); }
+    .err {
+      color: var(--danger);
+      font-size: 0.85rem;
+      margin: 0 0 0.85rem;
+      min-height: 1.2em;
+    }
   </style>
 </head>
 <body>
-  <form method="POST" action="/admin/login">
-    <h1>پنل ادمین</h1>
-    <p>Radio Javan Telegram Bot</p>
+  <form class="login" method="POST" action="/admin/login">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div>
+        <h1>Admin access</h1>
+        <p class="sub">Radio Javan Telegram bot</p>
+      </div>
+    </div>
     <div class="err">${escapeHtml(error)}</div>
-    <label for="password">رمز ادمین</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required />
-    <button type="submit">ورود</button>
+    <label for="password">Admin password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="ADMIN_TOKEN" />
+    <button type="submit">Sign in</button>
   </form>
 </body>
 </html>`;
@@ -41,160 +172,315 @@ function renderLoginPage({ error = "" } = {}) {
 
 function renderAdminPage() {
   return `<!DOCTYPE html>
-<html lang="fa" dir="rtl">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ادمین · RJ Downloader</title>
+  <title>Admin · RJ Downloader</title>
   <style>
-    :root { color-scheme: dark; --bg:#0f1419; --panel:#1a222c; --text:#e7ecf1; --muted:#8b9aab; --accent:#3d8bfd; --ok:#3dd68c; --danger:#e35d6a; --border:#2a3542; --mono: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    * { box-sizing: border-box; }
-    body { margin:0; background:var(--bg); color:var(--text); font-family: ui-sans-serif, system-ui, sans-serif; }
-    header { display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:1rem 1.25rem; border-bottom:1px solid var(--border); background:var(--panel); position:sticky; top:0; z-index:2; }
-    header h1 { margin:0; font-size:1rem; }
-    header .meta { color:var(--muted); font-size:.85rem; }
-    main { display:grid; gap:1rem; padding:1rem 1.25rem 2rem; max-width:980px; margin:0 auto; }
-    section { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:1rem; }
-    section h2 { margin:0 0 .75rem; font-size:.95rem; }
-    .row { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin-bottom:.5rem; }
-    label { font-size:.8rem; color:var(--muted); }
-    input, textarea, select { background:#0f1419; color:var(--text); border:1px solid var(--border); border-radius:8px; padding:.55rem .7rem; font: inherit; }
-    input { min-width:140px; }
-    textarea { width:100%; min-height:72px; resize:vertical; }
-    button { border:0; border-radius:8px; padding:.55rem .85rem; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; font-size:.85rem; }
-    button.secondary { background:#2a3542; }
-    button.danger { background:var(--danger); }
-    .grid { display:grid; gap:.35rem; font-family:var(--mono); font-size:.82rem; }
-    .grid div { display:flex; gap:.5rem; justify-content:space-between; border-bottom:1px dashed var(--border); padding:.25rem 0; }
-    .grid span:last-child { color:var(--muted); text-align:left; direction:ltr; }
-    .ok { color:var(--ok); }
-    .bad { color:var(--danger); }
-    .muted { color:var(--muted); }
-    pre { white-space:pre-wrap; word-break:break-word; background:#0f1419; border:1px solid var(--border); border-radius:8px; padding:.75rem; font-size:.78rem; direction:ltr; text-align:left; max-height:240px; overflow:auto; }
-    table { width:100%; border-collapse:collapse; font-size:.8rem; }
-    th, td { border-bottom:1px solid var(--border); padding:.4rem .35rem; text-align:right; }
-    td.ltr, th.ltr { direction:ltr; text-align:left; font-family:var(--mono); }
-    tr:hover td { background:#121820; cursor:pointer; }
+    ${SHARED_STYLES}
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.95rem 1.35rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(11, 15, 20, 0.82);
+      backdrop-filter: blur(14px);
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+    .brand-row { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
+    .brand-mark {
+      width: 2rem;
+      height: 2rem;
+      border-radius: 10px;
+      flex: 0 0 auto;
+      background: linear-gradient(135deg, #2dd4bf, #60a5fa);
+    }
+    header h1 {
+      margin: 0;
+      font-size: 0.98rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    header .meta {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-top: 0.15rem;
+      font-family: var(--mono);
+    }
+    header form { margin: 0; }
+    main {
+      display: grid;
+      gap: 1rem;
+      padding: 1.15rem 1.35rem 2.5rem;
+      max-width: 1040px;
+      margin: 0 auto;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.1rem 1.15rem 1.2rem;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset;
+      backdrop-filter: blur(10px);
+    }
+    section h2 {
+      margin: 0 0 0.35rem;
+      font-size: 0.92rem;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+    .section-desc {
+      margin: 0 0 0.9rem;
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 0.55rem;
+    }
+    .row:last-child { margin-bottom: 0; }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.28rem;
+    }
+    .actions { gap: 0.45rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.55rem;
+    }
+    .stat {
+      background: rgba(11, 15, 20, 0.55);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.7rem 0.8rem;
+      min-height: 64px;
+    }
+    .stat .k {
+      display: block;
+      color: var(--muted);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.35rem;
+    }
+    .stat .v {
+      font-family: var(--mono);
+      font-size: 0.84rem;
+      word-break: break-word;
+      color: var(--text);
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: rgba(11, 15, 20, 0.7);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.85rem;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      line-height: 1.45;
+      max-height: 260px;
+      overflow: auto;
+      margin: 0.75rem 0 0;
+    }
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: rgba(11, 15, 20, 0.35);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th, td { padding: 0.55rem 0.7rem; text-align: left; border-bottom: 1px solid var(--border); }
+    th {
+      color: var(--muted);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+      background: rgba(255,255,255,0.02);
+      position: sticky;
+      top: 0;
+    }
+    td.mono, th.mono { font-family: var(--mono); }
+    tbody tr { cursor: pointer; transition: background 0.12s ease; }
+    tbody tr:hover td { background: rgba(45, 212, 191, 0.06); }
+    tbody tr:last-child td { border-bottom: 0; }
+    .links { display: flex; gap: 0.85rem; margin-left: auto; align-items: center; }
+    .links a {
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-decoration: none;
+      border-bottom: 1px dashed transparent;
+    }
+    .links a:hover { color: var(--accent-hover); border-bottom-color: var(--accent); }
+    .split {
+      display: grid;
+      gap: 0.75rem;
+    }
+    @media (min-width: 860px) {
+      .split-2 { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 640px) {
+      header { padding: 0.85rem 1rem; }
+      main { padding: 1rem; }
+      input { min-width: 0; flex: 1 1 120px; }
+      .links { width: 100%; margin-left: 0; }
+    }
   </style>
 </head>
 <body>
   <header>
-    <div>
-      <h1>RJ Downloader · Admin</h1>
-      <div class="meta" id="headerStatus">در حال بارگذاری…</div>
+    <div class="brand-row">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div>
+        <h1>RJ Downloader · Admin</h1>
+        <div class="meta" id="headerStatus">Loading…</div>
+      </div>
     </div>
-    <form method="POST" action="/admin/logout"><button class="secondary" type="submit">خروج</button></form>
+    <form method="POST" action="/admin/logout"><button class="secondary" type="submit">Sign out</button></form>
   </header>
   <main>
     <section>
-      <h2>سیستم و آمار امروز</h2>
+      <h2>System &amp; today</h2>
+      <p class="section-desc">Live bot health, webhook state, and daily usage counters.</p>
       <div class="grid" id="systemGrid"></div>
-      <pre id="statsOut" class="muted" style="margin-top:.75rem"></pre>
+      <pre id="statsOut" class="muted"></pre>
     </section>
 
     <section>
-      <h2>تنظیمات عملیاتی (runtime)</h2>
-      <p class="muted" style="margin:0 0 .75rem;font-size:.85rem">جدا از vars دپلوی — در KV ذخیره می‌شود. Allowlist ≠ VIP.</p>
-      <div class="row">
-        <button type="button" id="btnAllowlistOn">Allowlist روشن</button>
-        <button type="button" class="secondary" id="btnAllowlistOff">Allowlist خاموش</button>
-        <button type="button" class="danger" id="btnQueuePause">توقف صف</button>
-        <button type="button" class="secondary" id="btnQueueResume">ادامه صف</button>
+      <h2>Runtime settings</h2>
+      <p class="section-desc">Stored in KV — no redeploy needed. Allowlist and VIP are separate flags.</p>
+      <div class="row actions">
+        <button type="button" id="btnAllowlistOn">Allowlist on</button>
+        <button type="button" class="secondary" id="btnAllowlistOff">Allowlist off</button>
+        <button type="button" class="danger" id="btnQueuePause">Pause queue</button>
+        <button type="button" class="secondary" id="btnQueueResume">Resume queue</button>
       </div>
       <div class="row">
-        <label>delay (s)</label>
-        <input id="cfgDelay" type="number" min="1" max="60" style="min-width:90px" />
-        <label>progress every</label>
-        <input id="cfgProgress" type="number" min="1" max="50" style="min-width:90px" />
-        <label>max URL attempts</label>
-        <input id="cfgAttempts" type="number" min="1" max="8" style="min-width:90px" />
+        <div class="field"><label for="cfgDelay">Delay (s)</label><input id="cfgDelay" type="number" min="1" max="60" /></div>
+        <div class="field"><label for="cfgProgress">Progress every</label><input id="cfgProgress" type="number" min="1" max="50" /></div>
+        <div class="field"><label for="cfgAttempts">Max URL attempts</label><input id="cfgAttempts" type="number" min="1" max="8" /></div>
+        <div class="field"><label for="cfgDailyLimit">Daily limit</label><input id="cfgDailyLimit" type="number" min="0" max="5000" /></div>
+        <div class="field">
+          <label for="cfgBulkCache">Bulk cache</label>
+          <select id="cfgBulkCache"><option value="">env</option><option value="true">on</option><option value="false">off</option></select>
+        </div>
       </div>
-      <div class="row">
-        <label>daily limit</label>
-        <input id="cfgDailyLimit" type="number" min="0" max="5000" style="min-width:100px" />
-        <label>bulk cache</label>
-        <select id="cfgBulkCache"><option value="">env</option><option value="true">on</option><option value="false">off</option></select>
-        <button type="button" id="btnSaveRuntime">ذخیره overrides</button>
-        <button type="button" class="secondary" id="btnClearRuntimeNums">پاک‌کردن overrides عددی</button>
+      <div class="row actions">
+        <button type="button" id="btnSaveRuntime">Save overrides</button>
+        <button type="button" class="secondary" id="btnClearRuntimeNums">Clear numeric overrides</button>
       </div>
       <pre id="runtimeOut" class="muted"></pre>
     </section>
 
     <section>
-      <h2>کاربران شناخته‌شده</h2>
-      <div class="row">
-        <button type="button" id="btnLoadUsers">بارگذاری لیست</button>
-        <button type="button" class="secondary" id="btnLoadBanned">فقط بن‌شده‌ها</button>
+      <h2>Known users</h2>
+      <p class="section-desc">Click a row to load that chat into jobs and user tools.</p>
+      <div class="row actions">
+        <button type="button" id="btnLoadUsers">Refresh list</button>
+        <button type="button" class="secondary" id="btnLoadBanned">Banned only</button>
       </div>
-      <div style="overflow:auto">
+      <div class="table-wrap">
         <table>
-          <thead><tr><th class="ltr">chatId</th><th>نام</th><th>آخرین بازدید</th><th>وضعیت</th><th>منبع</th></tr></thead>
-          <tbody id="usersBody"><tr><td colspan="5" class="muted">لیست را بارگذاری کنید.</td></tr></tbody>
+          <thead>
+            <tr>
+              <th class="mono">chatId</th>
+              <th>Name</th>
+              <th class="mono">Last seen</th>
+              <th>Status</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody id="usersBody"><tr><td colspan="5" class="muted">Load the list to see users.</td></tr></tbody>
         </table>
       </div>
     </section>
 
     <section>
-      <h2>جاب‌های چت</h2>
+      <h2>Chat jobs</h2>
+      <p class="section-desc">Inspect active/pending artist deliveries and intervene.</p>
       <div class="row">
-        <label>chatId</label>
-        <input id="jobChatId" placeholder="224032101" />
-        <button type="button" id="btnLoadChat">بارگذاری</button>
-        <button type="button" class="danger" id="btnCancel">لغو فعال</button>
-        <button type="button" class="secondary" id="btnClearPending">پاک کردن pending</button>
-        <button type="button" id="btnPromotePending">شروع pending الان</button>
+        <div class="field"><label for="jobChatId">chatId</label><input id="jobChatId" placeholder="224032101" class="mono" /></div>
+        <button type="button" id="btnLoadChat">Load</button>
+        <button type="button" class="danger" id="btnCancel">Cancel active</button>
+        <button type="button" class="secondary" id="btnClearPending">Clear pending</button>
+        <button type="button" id="btnPromotePending">Promote pending now</button>
       </div>
-      <pre id="jobOut" class="muted">chatId را وارد کنید یا از جدول کاربران انتخاب کنید.</pre>
+      <pre id="jobOut" class="muted">Enter a chatId or pick a user from the table.</pre>
     </section>
 
     <section>
-      <h2>رویدادهای DLQ / خطا / Audit</h2>
-      <div class="row">
+      <h2>DLQ / errors / audit</h2>
+      <p class="section-desc">Recent operational events. Export downloads a JSON file.</p>
+      <div class="row actions">
         <button type="button" id="btnLoadDlq">DLQ</button>
-        <button type="button" class="secondary" id="btnLoadErrors">خطاها</button>
+        <button type="button" class="secondary" id="btnLoadErrors">Errors</button>
         <button type="button" class="secondary" id="btnLoadAudit">Audit</button>
-        <a class="muted" id="exportErrors" href="/admin/api/export?kind=errors" style="margin-inline-start:auto;font-size:.85rem">Export errors</a>
-        <a class="muted" id="exportDlq" href="/admin/api/export?kind=dlq" style="font-size:.85rem">Export DLQ</a>
+        <div class="links">
+          <a id="exportErrors" href="/admin/api/export?kind=errors">Export errors</a>
+          <a id="exportDlq" href="/admin/api/export?kind=dlq">Export DLQ</a>
+        </div>
       </div>
       <pre id="dlqOut" class="muted"></pre>
     </section>
 
     <section>
-      <h2>کاربر / پیام / VIP / Allowlist / سهمیه</h2>
+      <h2>User · message · VIP · allowlist · quota</h2>
+      <p class="section-desc">VIP skips download quota. Allowlist only matters when allowlist mode is on. Admins are unlimited separately.</p>
       <div class="row">
-        <label>chatId</label>
-        <input id="userChatId" placeholder="224032101" />
-        <button type="button" id="btnLoadUser">بارگذاری</button>
-        <button type="button" class="danger" id="btnBan">بن</button>
-        <button type="button" class="secondary" id="btnUnban">آن‌بن</button>
+        <div class="field"><label for="userChatId">chatId</label><input id="userChatId" placeholder="224032101" /></div>
+        <button type="button" id="btnLoadUser">Load</button>
+        <button type="button" class="danger" id="btnBan">Ban</button>
+        <button type="button" class="secondary" id="btnUnban">Unban</button>
         <button type="button" id="btnVipOn">VIP</button>
-        <button type="button" class="secondary" id="btnVipOff">عادی</button>
+        <button type="button" class="secondary" id="btnVipOff">Normal</button>
         <button type="button" id="btnAllowOn">Allowlist</button>
-        <button type="button" class="secondary" id="btnAllowOff">بدون Allowlist</button>
+        <button type="button" class="secondary" id="btnAllowOff">Remove allowlist</button>
+      </div>
+      <div class="row actions">
+        <button type="button" class="secondary" id="btnClearRecents">Clear recents</button>
+        <button type="button" class="danger" id="btnWipeUser">Wipe user</button>
       </div>
       <div class="row">
-        <button type="button" class="secondary" id="btnClearRecents">پاک کردن recents</button>
-        <button type="button" class="danger" id="btnWipeUser">Wipe کاربر</button>
-      </div>
-      <div class="row">
-        <label>سقف روزانه (خالی=پیش‌فرض)</label>
-        <input id="userDailyLimit" type="number" min="0" placeholder="مثلاً 20" style="min-width:120px" />
-        <button type="button" class="secondary" id="btnSaveQuota">ذخیره سهمیه</button>
+        <div class="field" style="flex:1;min-width:180px">
+          <label for="userDailyLimit">Daily limit (empty = default)</label>
+          <input id="userDailyLimit" type="number" min="0" placeholder="e.g. 20" />
+        </div>
+        <button type="button" class="secondary" id="btnSaveQuota">Save quota</button>
       </div>
       <div class="row" style="align-items:stretch">
-        <textarea id="userNote" placeholder="یادداشت ادمین…"></textarea>
+        <div class="field" style="flex:1;width:100%">
+          <label for="userNote">Admin note</label>
+          <textarea id="userNote" placeholder="Optional note…"></textarea>
+        </div>
       </div>
-      <div class="row">
-        <button type="button" class="secondary" id="btnSaveNote">ذخیره یادداشت</button>
+      <div class="row actions">
+        <button type="button" class="secondary" id="btnSaveNote">Save note</button>
       </div>
       <pre id="userOut" class="muted"></pre>
-      <div class="row" style="margin-top:.75rem">
-        <textarea id="msgText" placeholder="پیام به کاربر…"></textarea>
+      <div class="split split-2" style="margin-top:0.85rem">
+        <div>
+          <div class="field">
+            <label for="msgText">Message to user</label>
+            <textarea id="msgText" placeholder="Send a notice via the bot…"></textarea>
+          </div>
+          <div class="row actions" style="margin-top:0.55rem">
+            <button type="button" id="btnMessage">Send message</button>
+          </div>
+          <pre id="msgOut" class="muted"></pre>
+        </div>
       </div>
-      <div class="row">
-        <button type="button" id="btnMessage">ارسال پیام</button>
-      </div>
-      <pre id="msgOut" class="muted"></pre>
     </section>
   </main>
   <script>
@@ -219,28 +505,30 @@ function renderAdminPage() {
       const t = data.today || {};
       const botLabel = data.bot?.username ? "@" + data.bot.username : "(unknown)";
       $("headerStatus").innerHTML = data.ok
-        ? '<span class="ok">ok</span> · ' + botLabel
-        : '<span class="bad">down</span> · ' + (data.error || "");
+        ? '<span class="pill ok">ok</span> · ' + botLabel
+        : '<span class="pill bad">down</span> · ' + (data.error || "");
       const rows = [
-        ["bot", botLabel],
-        ["webhook", data.webhook?.url || "(none)"],
-        ["webhook pending", String(data.webhook?.pendingUpdateCount ?? "?")],
-        ["webhook last error", data.webhook?.lastErrorMessage || "(none)"],
-        ["queue", c.artistQueue],
-        ["dlq", c.artistDlq],
-        ["bulk cache writes", String(c.bulkCacheWrites)],
-        ["queue delay", c.queueDelaySeconds + "s"],
-        ["progress every", String(c.progressEvery)],
-        ["admin ids", (c.adminUserIds || []).join(", ") || "(none)"],
-        ["daily download limit", String(c.defaultDailyDownloadLimit)],
-        ["allowlist mode", String(c.runtime?.allowlistMode ?? false)],
-        ["queue paused", String(c.runtime?.queuePaused ?? false)],
-        ["today songs", String(t.songs || 0)],
-        ["today artists", String(t.artists || 0)],
-        ["today searches", String(t.searches || 0)],
-        ["today messages", String(t.messages || 0)],
+        ["Bot", botLabel],
+        ["Webhook", data.webhook?.url || "(none)"],
+        ["Webhook pending", String(data.webhook?.pendingUpdateCount ?? "?")],
+        ["Webhook last error", data.webhook?.lastErrorMessage || "(none)"],
+        ["Queue", c.artistQueue],
+        ["DLQ", c.artistDlq],
+        ["Bulk cache writes", String(c.bulkCacheWrites)],
+        ["Queue delay", c.queueDelaySeconds + "s"],
+        ["Progress every", String(c.progressEvery)],
+        ["Admin IDs", (c.adminUserIds || []).join(", ") || "(none)"],
+        ["Daily download limit", String(c.defaultDailyDownloadLimit)],
+        ["Allowlist mode", String(c.runtime?.allowlistMode ?? false)],
+        ["Queue paused", String(c.runtime?.queuePaused ?? false)],
+        ["Today songs", String(t.songs || 0)],
+        ["Today artists", String(t.artists || 0)],
+        ["Today searches", String(t.searches || 0)],
+        ["Today messages", String(t.messages || 0)],
       ];
-      $("systemGrid").innerHTML = rows.map(([k,v]) => "<div><span>"+k+"</span><span>"+String(v)+"</span></div>").join("");
+      $("systemGrid").innerHTML = rows.map(([k,v]) =>
+        '<div class="stat"><span class="k">'+k+'</span><span class="v">'+String(v)+'</span></div>'
+      ).join("");
       $("statsOut").textContent = JSON.stringify({
         recentStats: data.recentStats || [],
         recentErrors: data.recentErrors || [],
@@ -256,17 +544,17 @@ function renderAdminPage() {
     }
     function renderUsers(users) {
       if (!users.length) {
-        $("usersBody").innerHTML = '<tr><td colspan="5" class="muted">کاربری پیدا نشد.</td></tr>';
+        $("usersBody").innerHTML = '<tr><td colspan="5" class="muted">No users found.</td></tr>';
         return;
       }
       $("usersBody").innerHTML = users.map((u) => {
         const name = u.username ? "@"+u.username : (u.firstName || "—");
         const flags = [];
-        if (u.banned) flags.push('<span class="bad">banned</span>');
-        if (u.vip) flags.push('<span class="ok">vip</span>');
-        if (u.allowlisted) flags.push('<span class="ok">allow</span>');
-        const status = flags.length ? flags.join(" ") : '<span class="ok">ok</span>';
-        return '<tr data-chat="'+u.chatId+'"><td class="ltr">'+u.chatId+'</td><td>'+name+'</td><td class="ltr">'+(u.lastSeenAt || "—")+'</td><td>'+status+'</td><td>'+u.source+'</td></tr>';
+        if (u.banned) flags.push('<span class="pill bad">banned</span>');
+        if (u.vip) flags.push('<span class="pill ok">vip</span>');
+        if (u.allowlisted) flags.push('<span class="pill ok">allow</span>');
+        const status = flags.length ? flags.join(" ") : '<span class="pill neutral">ok</span>';
+        return '<tr data-chat="'+u.chatId+'"><td class="mono">'+u.chatId+'</td><td>'+name+'</td><td class="mono">'+(u.lastSeenAt || "—")+'</td><td>'+status+'</td><td>'+u.source+'</td></tr>';
       }).join("");
       [...$("usersBody").querySelectorAll("tr[data-chat]")].forEach((tr) => {
         tr.onclick = () => {
@@ -362,7 +650,7 @@ function renderAdminPage() {
     $("btnAllowOff").onclick = async () => { try { await patchUser({ allowlisted: false }); } catch (e) { $("userOut").textContent = e.message; } };
     $("btnClearRecents").onclick = async () => {
       try {
-        if (!confirm("پاک کردن recents این کاربر؟")) return;
+        if (!confirm("Clear recent history for this user?")) return;
         const data = await api("/admin/api/user/clear-recents", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim() }) });
         $("userOut").textContent = JSON.stringify(data, null, 2);
         await loadChat();
@@ -370,7 +658,7 @@ function renderAdminPage() {
     };
     $("btnWipeUser").onclick = async () => {
       try {
-        if (!confirm("Wipe کامل پروفایل، recents و جاب‌های این chatId؟")) return;
+        if (!confirm("Wipe profile, recents, and jobs for this chatId?")) return;
         const data = await api("/admin/api/user/wipe", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim() }) });
         $("userOut").textContent = JSON.stringify(data, null, 2);
         await loadUsers(false);

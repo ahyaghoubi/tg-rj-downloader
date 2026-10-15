@@ -98,7 +98,7 @@ async function handleAdminLogin(request, env) {
     if (/application\/json/i.test(contentType)) {
       return jsonResponse({ ok: false, error: "Invalid password" }, 401);
     }
-    return htmlResponse(renderLoginPage({ error: "رمز نادرست است." }), 401);
+    return htmlResponse(renderLoginPage({ error: "Incorrect password." }), 401);
   }
 
   const session = await createAdminSessionValue(env);

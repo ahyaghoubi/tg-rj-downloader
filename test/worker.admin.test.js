@@ -224,7 +224,7 @@ test("GET /admin shows login without auth and dashboard with auth", async () => 
   const env = adminEnv();
   const loginPage = await worker.fetch(new Request("https://worker.test/admin"), env, createMockCtx());
   assert.equal(loginPage.status, 200);
-  assert.match(await loginPage.text(), /رمز ادمین/);
+  assert.match(await loginPage.text(), /Admin password/);
 
   const cookie = await sessionCookie(env);
   const dash = await worker.fetch(
@@ -234,8 +234,8 @@ test("GET /admin shows login without auth and dashboard with auth", async () => 
   );
   assert.equal(dash.status, 200);
   const dashHtml = await dash.text();
-  assert.match(dashHtml, /تنظیمات عملیاتی/);
-  assert.match(dashHtml, /کاربران شناخته‌شده/);
+  assert.match(dashHtml, /Runtime settings/);
+  assert.match(dashHtml, /Known users/);
 });
 
 test("buildAdminCookie helper clears session", () => {
