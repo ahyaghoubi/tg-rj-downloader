@@ -4,6 +4,7 @@ import { searchRadioJavan } from "./search.js";
 import { pushUserRecent, readUserRecents } from "./commands.js";
 import { buildBotStartLink } from "./start-payload.js";
 import { orderSongUrls } from "../rj/urls.js";
+import { incrementStat } from "../admin/stats.js";
 
 function pickInlineAudioUrl(song) {
   if (song?.link && /^https?:\/\//i.test(song.link)) {
@@ -23,6 +24,7 @@ async function handleInlineQuery(inlineQuery, env) {
   try {
     if (query) {
       ({ artists, songs, playlists } = await searchRadioJavan(env, query));
+      await incrementStat(env, "inline");
       if (userId) {
         await pushUserRecent(env, userId, { type: "search", value: query, label: query });
       }

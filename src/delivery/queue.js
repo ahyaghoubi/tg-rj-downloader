@@ -14,6 +14,7 @@ import {
 import { artistNamesEqual, normalizeArtistName } from "../rj/urls.js";
 import { sendMessage, sendTrackToUser } from "../telegram/send.js";
 import { TelegramRateLimitError } from "../telegram/api.js";
+import { incrementStat } from "../admin/stats.js";
 
 function getArtistJobTrackKey(track) {
   return `${track.mediaType || "song"}:${String(track.permlink || track.title || "").toLowerCase()}`;
@@ -325,6 +326,9 @@ async function runQueuedArtistMessage(env, body) {
       payload.sentTrackKeys.push(trackKey);
       payload.sent += 1;
       payload.nextIndex += 1;
+      if (!payload.warmCache) {
+        await incrementStat(env, "songs");
+      }
       console.log(
         `Queue artist delivery ${payload.artistName}: sent ${payload.sent}/${payload.total}`
       );

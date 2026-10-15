@@ -16,7 +16,7 @@ import { normalizeArtistName } from "../rj/urls.js";
 import { sendMessage } from "../telegram/send.js";
 import { cancelChatArtistDelivery, readUserRecents } from "../bot/commands.js";
 import { warmArtistMissingTracks } from "../delivery/warm.js";
-import { getUser, updateUserFlags } from "./users.js";
+import { getUser, updateUserFlags, listKnownUsers } from "./users.js";
 import {
   buildAdminCookie,
   createAdminSessionValue,
@@ -24,6 +24,14 @@ import {
   passwordFromRequestBody,
 } from "./auth.js";
 import { renderAdminPage, renderLoginPage } from "./page.js";
+import { readDlqEvents } from "./dlq-log.js";
+import { readDailyStats, readRecentDailyStats } from "./stats.js";
+import {
+  getCachedTelegramFile,
+  deleteCachedTelegramFile,
+  getTelegramFileCacheKey,
+} from "../cache/telegram-file.js";
+import { getFileCacheStore } from "../config.js";
 
 function jsonResponse(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -110,19 +118,37 @@ async function handleOverview(env) {
   let bot = null;
   let botOk = false;
   let botError = null;
+  let webhook = null;
   if (token) {
     try {
-      const response = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-      const result = await response.json();
-      botOk = Boolean(result.ok);
-      bot = result.result || null;
-      botError = result.ok ? null : result.description;
+      const [meRes, hookRes] = await Promise.all([
+        fetch(`https://api.telegram.org/bot${token}/getMe`),
+        fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`),
+      ]);
+      const me = await meRes.json();
+      const hook = await hookRes.json();
+      botOk = Boolean(me.ok);
+      bot = me.result || null;
+      botError = me.ok ? null : me.description;
+      if (hook.ok && hook.result) {
+        webhook = {
+          url: hook.result.url || "",
+          pendingUpdateCount: hook.result.pending_update_count || 0,
+          lastErrorMessage: hook.result.last_error_message || null,
+          lastErrorDate: hook.result.last_error_date || null,
+        };
+      }
     } catch (err) {
       botError = err.message;
     }
   } else {
     botError = "BOT_TOKEN not configured";
   }
+
+  const [today, recentStats] = await Promise.all([
+    readDailyStats(env),
+    readRecentDailyStats(env, 7),
+  ]);
 
   return jsonResponse({
     ok: botOk,
@@ -134,6 +160,9 @@ async function handleOverview(env) {
         }
       : null,
     error: botError,
+    webhook,
+    today,
+    recentStats,
     config: {
       artistQueue: ARTIST_DELIVERY_QUEUE_NAME,
       artistDlq: ARTIST_DELIVERY_DLQ_NAME,
@@ -313,6 +342,64 @@ async function handleAdminRequest(request, env, ctx) {
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 500);
     }
+  }
+
+  if (path === "/admin/api/users" && request.method === "GET") {
+    const bannedOnly = url.searchParams.get("bannedOnly") === "1";
+    const limit = Math.min(Number(url.searchParams.get("limit")) || 50, 100);
+    const users = await listKnownUsers(env, { limit, bannedOnly });
+    return jsonResponse({ ok: true, users, count: users.length });
+  }
+
+  if (path === "/admin/api/dlq" && request.method === "GET") {
+    const events = await readDlqEvents(env);
+    return jsonResponse({ ok: true, events });
+  }
+
+  if (path === "/admin/api/cache" && request.method === "GET") {
+    const permlink = url.searchParams.get("permlink");
+    if (!permlink) {
+      return jsonResponse({ ok: false, error: "permlink required" }, 400);
+    }
+    const track = { permlink, mediaType: "song" };
+    const qualities = ["320", "256"];
+    const entries = [];
+    for (const quality of qualities) {
+      const cached = await getCachedTelegramFile(env, track, quality);
+      entries.push({
+        quality,
+        key: getTelegramFileCacheKey(track, quality),
+        hit: Boolean(cached),
+        record: cached
+          ? {
+              fileId: cached.fileId,
+              title: cached.title || null,
+              sourceUrl: cached.sourceUrl || null,
+              cachedAt: cached.cachedAt || null,
+            }
+          : null,
+      });
+    }
+    return jsonResponse({
+      ok: true,
+      permlink,
+      hasFileCache: Boolean(getFileCacheStore(env)),
+      entries,
+    });
+  }
+
+  if (path === "/admin/api/cache/delete" && request.method === "POST") {
+    const body = await readJsonOrForm(request);
+    const permlink = body.permlink;
+    const quality = body.quality || "320";
+    if (!permlink) {
+      return jsonResponse({ ok: false, error: "permlink required" }, 400);
+    }
+    await deleteCachedTelegramFile(env, { permlink, mediaType: "song" }, String(quality));
+    if (!body.quality) {
+      await deleteCachedTelegramFile(env, { permlink, mediaType: "song" }, "256");
+    }
+    return jsonResponse({ ok: true, permlink, quality: body.quality || "320+256" });
   }
 
   return jsonResponse({ ok: false, error: "Not found" }, 404);

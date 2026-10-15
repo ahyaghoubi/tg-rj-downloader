@@ -8,6 +8,7 @@ import {
 } from "../rj/tracks.js";
 import { sendMessage, sendTrackToUser } from "../telegram/send.js";
 import { presentArtistMenu, enqueueBulkDelivery } from "./artist-menu.js";
+import { incrementStat } from "../admin/stats.js";
 
 async function handleUrl(userId, url, env, origin) {
   try {
@@ -34,6 +35,7 @@ async function handleUrl(userId, url, env, origin) {
         await sendMessage(userId, `❌ خطا در دریافت پلی‌لیست: ${err.message}`, getBotToken(env));
         return;
       }
+      await incrementStat(env, "playlists");
       await enqueueBulkDelivery(env, userId, `پلی‌لیست ${mediaName}`, tracks);
       return;
     }
@@ -49,6 +51,7 @@ async function handleUrl(userId, url, env, origin) {
         return;
       }
       const label = album.artist ? `${album.artist} - ${album.title}` : album.title;
+      await incrementStat(env, "albums");
       await enqueueBulkDelivery(env, userId, label, album.tracks);
       return;
     }
@@ -81,6 +84,7 @@ async function handleUrl(userId, url, env, origin) {
 
     try {
       await sendTrackToUser(userId, track, env, { preferUrl: true, cacheUploads: true });
+      await incrementStat(env, "songs");
     } catch (err) {
       console.error(`Error sending media: ${err.message}`);
       await sendMessage(

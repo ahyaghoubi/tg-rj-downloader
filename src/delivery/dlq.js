@@ -1,5 +1,6 @@
 import { getBotToken, getArtistQueueDelaySeconds } from "../config.js";
 import { sendMessage } from "../telegram/send.js";
+import { recordDlqEvent } from "../admin/dlq-log.js";
 import {
   enqueueArtistQueueMessage,
   finishQueueChatDelivery,
@@ -23,6 +24,7 @@ async function handleArtistDeliveryDlq(env, body) {
     try {
       const delaySeconds = Math.max(getArtistQueueDelaySeconds(env) + (payload.rateLimitBoost || 0), 5);
       await enqueueArtistQueueMessage(env, payload, { delaySeconds });
+      await recordDlqEvent(env, payload, { retryCount, autoRetried: true });
       await sendMessage(
         payload.chatId,
         `ارسال ${payload.artistName} به صف خطا رفت. یک‌بار دیگر از آهنگ ${nextSong}/${payload.total} تلاش می‌شود...`,
@@ -34,6 +36,8 @@ async function handleArtistDeliveryDlq(env, body) {
       console.warn(`DLQ auto-retry enqueue failed: ${err.message}`);
     }
   }
+
+  await recordDlqEvent(env, payload, { retryCount, autoRetried: false });
 
   try {
     await sendMessage(

@@ -17,6 +17,7 @@ import { resolveStartPayload } from "./start-payload.js";
 import { presentArtistMenu, startArtistDelivery, enqueueBulkDelivery } from "./artist-menu.js";
 import { fetchPlaylistTracks, fetchAlbumTracks } from "../rj/tracks.js";
 import { isUserBanned, touchUser } from "../admin/users.js";
+import { incrementStat } from "../admin/stats.js";
 
 async function handleStartPayload(chatId, payload, env, origin) {
   const resolved = await resolveStartPayload(env, payload);
@@ -138,6 +139,7 @@ async function processUpdate(update, env, origin) {
     }
 
     await touchUser(env, message.from, message.chat);
+    await incrementStat(env, "messages");
 
     if (await isUserBanned(env, chatId)) {
       const isPrivate = message.chat?.type === "private" || !message.chat?.type;

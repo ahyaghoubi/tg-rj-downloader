@@ -9,6 +9,7 @@ import { extractPlaylistsFromPayload, isSkippedTrack } from "../rj/tracks.js";
 import { sendMessage } from "../telegram/send.js";
 import { makeCallbackData } from "./callback-store.js";
 import { pushUserRecent } from "./commands.js";
+import { incrementStat } from "../admin/stats.js";
 
 function summarizeSearchResults(artists, songs, playlists = []) {
   const lines = ["نتایج جستجو — روی دکمه بزنید:"];
@@ -156,6 +157,7 @@ async function handleSearchQuery(chatId, query, env) {
 
   await sendMessage(chatId, `در حال جستجو برای «${trimmed}»...`, token);
   const { artists, songs, playlists } = await searchRadioJavan(env, trimmed);
+  await incrementStat(env, "searches");
   await pushUserRecent(env, chatId, { type: "search", value: trimmed, label: trimmed });
 
   if (!artists.length && !songs.length && !playlists.length) {

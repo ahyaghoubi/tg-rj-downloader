@@ -4,6 +4,7 @@ import { fetchArtistCatalog, selectArtistTracks } from "../rj/tracks.js";
 import { sendMessage } from "../telegram/send.js";
 import { makeCallbackData } from "./callback-store.js";
 import { enqueueArtistQueueDelivery } from "../delivery/queue.js";
+import { incrementStat } from "../admin/stats.js";
 
 async function buildArtistChoiceKeyboard(env, artistName, catalog) {
   const rows = [];
@@ -126,6 +127,7 @@ async function startArtistDelivery(chatId, artistName, env, { limit = null } = {
 
   const tracks = selectArtistTracks(catalog.tracks, limit);
   const label = limit ? `${artistName} (آخرین ${tracks.length})` : artistName;
+  await incrementStat(env, "artists");
   await enqueueBulkDelivery(env, chatId, label, tracks);
 }
 

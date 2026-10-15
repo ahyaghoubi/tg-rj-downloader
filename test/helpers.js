@@ -19,6 +19,18 @@ export function createMockKv(initial = {}) {
       operations.push({ type: "delete", key });
       store.delete(key);
     },
+    async list({ prefix = "", limit = 1000, cursor } = {}) {
+      operations.push({ type: "list", prefix, limit, cursor });
+      const all = [...store.keys()].filter((key) => key.startsWith(prefix)).sort();
+      const start = cursor ? Number(cursor) || 0 : 0;
+      const slice = all.slice(start, start + limit);
+      const next = start + limit;
+      return {
+        keys: slice.map((name) => ({ name })),
+        list_complete: next >= all.length,
+        cursor: next < all.length ? String(next) : undefined,
+      };
+    },
   };
 }
 

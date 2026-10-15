@@ -42,7 +42,10 @@ test("simulated 12-artist stress stays local, compact, and one-song paced", asyn
       assert.equal(message.payload.tracks[0].urls, undefined);
     }
 
-    const kvProgressWrites = env.ARTIST_JOB_STORE.operations.filter((op) => op.type === "put");
+    // Stats counters may write daily keys; queue progress itself must not put per-song job docs.
+    const kvProgressWrites = env.ARTIST_JOB_STORE.operations.filter(
+      (op) => op.type === "put" && !String(op.key || "").startsWith("stats:v1:daily:")
+    );
     assert.equal(kvProgressWrites.length, 0);
   } finally {
     telegram.restore();
