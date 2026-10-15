@@ -9,13 +9,17 @@ import {
 import { sendMessage, sendTrackToUser } from "../telegram/send.js";
 import { presentArtistMenu, enqueueBulkDelivery } from "./artist-menu.js";
 import { incrementStat } from "../admin/stats.js";
-import { checkAndConsumeQuota } from "../admin/users.js";
+import { checkAndConsumeQuota, recordUserActivity } from "../admin/users.js";
 
 async function ensureQuota(env, chatId, amount, token) {
   const quota = await checkAndConsumeQuota(env, chatId, amount);
   if (quota.ok) {
     return true;
   }
+  await recordUserActivity(env, chatId, {
+    type: "quota_blocked",
+    detail: `${quota.used}/${quota.limit}`,
+  });
   await sendMessage(
     chatId,
     `سهمیهٔ دانلود روزانه تمام شده است (${quota.used}/${quota.limit}). فردا دوباره تلاش کنید یا با ادمین تماس بگیرید.`,
@@ -103,6 +107,10 @@ async function handleUrl(userId, url, env, origin) {
     try {
       await sendTrackToUser(userId, track, env, { preferUrl: true, cacheUploads: true });
       await incrementStat(env, "songs");
+      await recordUserActivity(env, userId, {
+        type: "download_song",
+        detail: track.permlink || title || mediaName,
+      });
     } catch (err) {
       console.error(`Error sending media: ${err.message}`);
       await sendMessage(

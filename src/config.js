@@ -49,6 +49,8 @@ const USER_RECENT_PREFIX = "user-recent:v1";
 
 const USER_PROFILE_PREFIX = "user:v1";
 
+const USER_ACTIVITY_PREFIX = "user-activity:v1";
+
 const ADMIN_USER_INDEX_KEY = "admin-user-index:v1";
 
 const ADMIN_DLQ_EVENTS_KEY = "admin-dlq-events:v1";
@@ -61,7 +63,9 @@ const ADMIN_COOKIE_NAME = "rj_admin_session";
 
 const ADMIN_SESSION_TTL_S = 12 * 60 * 60;
 
-const ADMIN_USER_INDEX_LIMIT = 100;
+const ADMIN_USER_INDEX_LIMIT = 500;
+
+const USER_ACTIVITY_LIMIT = 40;
 
 const ADMIN_DLQ_EVENTS_LIMIT = 40;
 
@@ -226,6 +230,10 @@ function userRecentKey(chatId) {
   return `${USER_RECENT_PREFIX}:${chatId}`;
 }
 
+function userActivityKey(chatId) {
+  return `${USER_ACTIVITY_PREFIX}:${chatId}`;
+}
+
 function userKey(chatId) {
   return `${USER_PROFILE_PREFIX}:${chatId}`;
 }
@@ -283,6 +291,7 @@ export {
   FILE_CACHE_PREFIX,
   USER_RECENT_PREFIX,
   USER_PROFILE_PREFIX,
+  USER_ACTIVITY_PREFIX,
   ADMIN_USER_INDEX_KEY,
   ADMIN_DLQ_EVENTS_KEY,
   ADMIN_STATS_PREFIX,
@@ -297,6 +306,7 @@ export {
   ADMIN_COOKIE_NAME,
   ADMIN_SESSION_TTL_S,
   ADMIN_USER_INDEX_LIMIT,
+  USER_ACTIVITY_LIMIT,
   ADMIN_DLQ_EVENTS_LIMIT,
   RATE_LIMIT_FALLBACK_SECONDS,
   MAX_RECENT_ITEMS,
@@ -323,6 +333,7 @@ export {
   queueChatPendingKey,
   queueChatCancelKey,
   userRecentKey,
+  userActivityKey,
   userKey,
   getJobStore,
   getFileCacheStore,

@@ -13,6 +13,7 @@ import {
   queueChatPendingKey,
   queueChatCancelKey,
   putKv,
+  isAdminUser,
 } from "../config.js";
 import { normalizeArtistName } from "../rj/urls.js";
 import { sendMessage } from "../telegram/send.js";
@@ -24,6 +25,9 @@ import {
   listKnownUsers,
   clearUserRecents,
   wipeUser,
+  getQuotaSnapshot,
+  readUserActivity,
+  recordUserActivity,
 } from "./users.js";
 import {
   buildAdminCookie,
@@ -219,17 +223,23 @@ async function readChatJobState(env, chatId) {
 }
 
 async function handleChatLookup(env, chatId) {
-  const [job, recents, user] = await Promise.all([
-    readChatJobState(env, chatId),
-    readUserRecents(env, chatId),
-    getUser(env, chatId),
+  const id = String(chatId);
+  const [job, recents, user, activity] = await Promise.all([
+    readChatJobState(env, id),
+    readUserRecents(env, id),
+    getUser(env, id),
+    readUserActivity(env, id),
   ]);
+  const quota = getQuotaSnapshot(env, user);
   return jsonResponse({
     ok: true,
-    chatId: String(chatId),
+    chatId: id,
     ...job,
     recents,
+    activity,
     user,
+    quota,
+    isAdmin: isAdminUser(env, id),
   });
 }
 
@@ -386,11 +396,6 @@ async function handleAdminRequest(request, env, _ctx) {
     } else if (body.vip === "true" || body.vip === "false") {
       patch.vip = body.vip === "true";
     }
-    if (typeof body.allowlisted === "boolean") {
-      patch.allowlisted = body.allowlisted;
-    } else if (body.allowlisted === "true" || body.allowlisted === "false") {
-      patch.allowlisted = body.allowlisted === "true";
-    }
     if (typeof body.note === "string") {
       patch.note = body.note;
     }
@@ -401,17 +406,23 @@ async function handleAdminRequest(request, env, _ctx) {
     }
     try {
       const user = await updateUserFlags(env, String(chatId), patch);
+      const detail = JSON.stringify({
+        banned: user.banned,
+        vip: user.vip,
+        dailyDownloadLimit: user.dailyDownloadLimit,
+      });
       await recordAdminAudit(env, {
         action: "user.update",
         chatId,
-        detail: JSON.stringify({
-          banned: user.banned,
-          vip: user.vip,
-          allowlisted: user.allowlisted,
-          dailyDownloadLimit: user.dailyDownloadLimit,
-        }),
+        detail,
       });
-      return jsonResponse({ ok: true, user });
+      await recordUserActivity(env, chatId, { type: "admin_update", detail });
+      return jsonResponse({
+        ok: true,
+        user,
+        quota: getQuotaSnapshot(env, user),
+        isAdmin: isAdminUser(env, chatId),
+      });
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 500);
     }
@@ -447,11 +458,6 @@ async function handleAdminRequest(request, env, _ctx) {
   if (path === "/admin/api/runtime" && request.method === "POST") {
     const body = await readJsonOrForm(request);
     const patch = {};
-    if (typeof body.allowlistMode === "boolean") {
-      patch.allowlistMode = body.allowlistMode;
-    } else if (body.allowlistMode === "true" || body.allowlistMode === "false") {
-      patch.allowlistMode = body.allowlistMode === "true";
-    }
     if (typeof body.queuePaused === "boolean") {
       patch.queuePaused = body.queuePaused;
     } else if (body.queuePaused === "true" || body.queuePaused === "false") {
@@ -491,6 +497,10 @@ async function handleAdminRequest(request, env, _ctx) {
     try {
       await sendMessage(chatId, text, getBotToken(env));
       await recordAdminAudit(env, { action: "message", chatId, detail: text.slice(0, 80) });
+      await recordUserActivity(env, chatId, {
+        type: "admin_message",
+        detail: text.slice(0, 80),
+      });
       return jsonResponse({ ok: true, chatId: String(chatId) });
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 500);
@@ -507,9 +517,27 @@ async function handleAdminRequest(request, env, _ctx) {
 
   if (path === "/admin/api/users" && request.method === "GET") {
     const bannedOnly = url.searchParams.get("bannedOnly") === "1";
-    const limit = Math.min(Number(url.searchParams.get("limit")) || 50, 100);
-    const users = await listKnownUsers(env, { limit, bannedOnly });
-    return jsonResponse({ ok: true, users, count: users.length });
+    const q = url.searchParams.get("q") || "";
+    const filter = url.searchParams.get("filter") || "all";
+    const sort = url.searchParams.get("sort") || "lastSeen";
+    const offset = Number(url.searchParams.get("offset")) || 0;
+    const limit = Math.min(Number(url.searchParams.get("limit")) || 25, 100);
+    const result = await listKnownUsers(env, {
+      q,
+      filter,
+      sort,
+      offset,
+      limit,
+      bannedOnly,
+    });
+    return jsonResponse({
+      ok: true,
+      users: result.users,
+      count: result.users.length,
+      total: result.total,
+      offset: result.offset,
+      limit: result.limit,
+    });
   }
 
   if (path === "/admin/api/dlq" && request.method === "GET") {

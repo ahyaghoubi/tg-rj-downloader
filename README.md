@@ -222,7 +222,7 @@ Artist delivery uses [Cloudflare Queues](https://developers.cloudflare.com/queue
 
    Open the ops dashboard at `https://<your-worker>.workers.dev/admin` and sign in with `ADMIN_TOKEN`.
 
-   Runtime controls on `/admin` (KV, no redeploy): allowlist mode, queue pause, safe numeric overrides (queue delay, progress every, daily limit), per-user VIP / allowlist / wipe.
+   Runtime controls on `/admin` (KV, no redeploy): queue pause, safe numeric overrides (queue delay, progress every, daily limit). Users console supports search/filters/pagination, VIP/ban/quota/note, activity history, and messaging.
 
 **Notes**
 

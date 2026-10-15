@@ -14,6 +14,7 @@ import { artistNamesEqual, normalizeArtistName } from "../rj/urls.js";
 import { sendMessage, sendTrackToUser } from "../telegram/send.js";
 import { TelegramRateLimitError } from "../telegram/api.js";
 import { incrementStat } from "../admin/stats.js";
+import { recordUserActivity } from "../admin/users.js";
 
 function getArtistJobTrackKey(track) {
   return `${track.mediaType || "song"}:${String(track.permlink || track.title || "").toLowerCase()}`;
@@ -365,6 +366,12 @@ async function runQueuedArtistMessage(env, body) {
     }
     await sendMessage(payload.chatId, summary, token);
     console.log(`Queue artist delivery ${payload.artistName}: completed`);
+    if (!payload.warmCache) {
+      await recordUserActivity(env, payload.chatId, {
+        type: "artist_done",
+        detail: `${payload.artistName} ${payload.sent}/${payload.total}`,
+      });
+    }
     await finishQueueChatDelivery(env, payload);
     return;
   }

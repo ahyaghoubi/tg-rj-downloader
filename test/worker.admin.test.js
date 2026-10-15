@@ -235,7 +235,8 @@ test("GET /admin shows login without auth and dashboard with auth", async () => 
   assert.equal(dash.status, 200);
   const dashHtml = await dash.text();
   assert.match(dashHtml, /Runtime settings/);
-  assert.match(dashHtml, /Known users/);
+  assert.match(dashHtml, /Users/);
+  assert.match(dashHtml, /userSearch/);
 });
 
 test("buildAdminCookie helper clears session", () => {
@@ -258,6 +259,7 @@ test("admin lists known users from profiles and recents", async () => {
   const body = await all.json();
   const ids = body.users.map((u) => u.chatId).sort();
   assert.deepEqual(ids, ["111", "222", "333"]);
+  assert.equal(body.total, 3);
 
   const banned = await worker.fetch(
     new Request("https://worker.test/admin/api/users?bannedOnly=1", { headers: { Cookie: cookie } }),
@@ -267,6 +269,76 @@ test("admin lists known users from profiles and recents", async () => {
   const bannedBody = await banned.json();
   assert.equal(bannedBody.users.length, 1);
   assert.equal(bannedBody.users[0].chatId, "222");
+});
+
+test("listKnownUsers filters, sorts, and paginates", async () => {
+  const { listKnownUsers, updateUserFlags, checkAndConsumeQuota } = await import(
+    "../src/admin/users.js"
+  );
+  const env = adminEnv({ ADMIN_USER_IDS: "1", DEFAULT_DAILY_DOWNLOAD_LIMIT: "50" });
+  await updateUserFlags(env, "1", { vip: false, note: "admin" });
+  await updateUserFlags(env, "2", { vip: true });
+  await updateUserFlags(env, "3", { banned: true });
+  await updateUserFlags(env, "4", { vip: false });
+  await checkAndConsumeQuota(env, "2", 5);
+  await checkAndConsumeQuota(env, "4", 1);
+
+  const vip = await listKnownUsers(env, { filter: "vip", limit: 10 });
+  assert.equal(vip.total, 1);
+  assert.equal(vip.users[0].chatId, "2");
+
+  const admins = await listKnownUsers(env, { filter: "admin", limit: 10 });
+  assert.ok(admins.users.some((u) => u.chatId === "1" && u.isAdmin));
+
+  const page1 = await listKnownUsers(env, { sort: "downloads", offset: 0, limit: 2 });
+  assert.equal(page1.users.length, 2);
+  assert.equal(page1.total, 4);
+  assert.equal(page1.users[0].chatId, "2");
+
+  const q = await listKnownUsers(env, { q: "2", limit: 10 });
+  assert.equal(q.total, 1);
+  assert.equal(q.users[0].chatId, "2");
+});
+
+test("user activity ring keeps newest 40 events", async () => {
+  const { recordUserActivity, readUserActivity } = await import("../src/admin/users.js");
+  const env = adminEnv();
+  for (let i = 0; i < 45; i += 1) {
+    await recordUserActivity(env, "77", { type: "search", detail: `q${i}` });
+  }
+  const events = await readUserActivity(env, "77");
+  assert.equal(events.length, 40);
+  assert.equal(events[0].detail, "q44");
+  assert.equal(events[39].detail, "q5");
+});
+
+test("chat detail includes quota activity and isAdmin", async () => {
+  const { updateUserFlags, recordUserActivity, checkAndConsumeQuota } = await import(
+    "../src/admin/users.js"
+  );
+  const env = adminEnv({
+    ADMIN_USER_IDS: "224032101",
+    DEFAULT_DAILY_DOWNLOAD_LIMIT: "10",
+  });
+  await updateUserFlags(env, "224032101", { vip: false, note: "owner" });
+  await checkAndConsumeQuota(env, "224032101", 2);
+  await recordUserActivity(env, "224032101", { type: "start", detail: null });
+
+  const cookie = await sessionCookie(env);
+  const response = await worker.fetch(
+    new Request("https://worker.test/admin/api/chat?chatId=224032101", {
+      headers: { Cookie: cookie },
+    }),
+    env,
+    createMockCtx()
+  );
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.isAdmin, true);
+  assert.equal(body.quota.unlimited, true);
+  assert.ok(Array.isArray(body.activity));
+  assert.equal(body.activity[0].type, "start");
+  assert.equal(body.user.note, "owner");
 });
 
 test("admin dlq events endpoint returns recorded events", async () => {
@@ -311,22 +383,6 @@ test("admin user id is unlimited without VIP flag", async () => {
   assert.equal(second.unlimited, true);
   // VIP stays a separate flag — admin unlimited does not set vip
   assert.equal(second.user.vip, false);
-});
-
-test("allowlist mode blocks non-allowlisted users but not admins", async () => {
-  const { updateUserFlags, isUserAllowed } = await import("../src/admin/users.js");
-  const { saveRuntimeConfig, loadRuntimeConfig } = await import("../src/admin/runtime-config.js");
-  const env = adminEnv({ ADMIN_USER_IDS: "224032101" });
-  await saveRuntimeConfig(env, { allowlistMode: true });
-  await loadRuntimeConfig(env, { force: true });
-  await updateUserFlags(env, "99", { allowlisted: false });
-  await updateUserFlags(env, "88", { allowlisted: true });
-  assert.equal(await isUserAllowed(env, "99"), false);
-  assert.equal(await isUserAllowed(env, "88"), true);
-  assert.equal(await isUserAllowed(env, "224032101"), true);
-  await saveRuntimeConfig(env, { allowlistMode: false });
-  await loadRuntimeConfig(env, { force: true });
-  assert.equal(await isUserAllowed(env, "99"), true);
 });
 
 test("runtime config overrides delay and queue pause endpoint works", async () => {

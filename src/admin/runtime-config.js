@@ -11,7 +11,6 @@ import {
 
 function emptyRuntimeConfig() {
   return {
-    allowlistMode: false,
     queuePaused: false,
     artistQueueDelaySeconds: null,
     artistProgressEvery: null,
@@ -33,7 +32,6 @@ function normalizeRuntimeConfig(parsed = {}) {
 
   return {
     ...base,
-    allowlistMode: Boolean(parsed.allowlistMode),
     queuePaused: Boolean(parsed.queuePaused),
     artistQueueDelaySeconds: numOrNull(parsed.artistQueueDelaySeconds),
     artistProgressEvery: numOrNull(parsed.artistProgressEvery),
@@ -81,10 +79,6 @@ async function saveRuntimeConfig(env, patch = {}) {
   return next;
 }
 
-function isAllowlistMode(env) {
-  return Boolean(env?.[RUNTIME_CONFIG_CACHE]?.allowlistMode);
-}
-
 function isQueuePaused(env) {
   return Boolean(env?.[RUNTIME_CONFIG_CACHE]?.queuePaused);
 }
@@ -92,7 +86,6 @@ function isQueuePaused(env) {
 function effectiveConfigSnapshot(env) {
   const runtime = env?.[RUNTIME_CONFIG_CACHE] || emptyRuntimeConfig();
   return {
-    allowlistMode: Boolean(runtime.allowlistMode),
     queuePaused: Boolean(runtime.queuePaused),
     artistQueueDelaySeconds: getArtistQueueDelaySeconds(env),
     artistProgressEvery: getArtistProgressEvery(env),
@@ -112,7 +105,6 @@ export {
   emptyRuntimeConfig,
   loadRuntimeConfig,
   saveRuntimeConfig,
-  isAllowlistMode,
   isQueuePaused,
   effectiveConfigSnapshot,
 };

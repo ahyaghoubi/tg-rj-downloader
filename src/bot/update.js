@@ -16,7 +16,7 @@ import { handleUrl } from "./handle-url.js";
 import { resolveStartPayload } from "./start-payload.js";
 import { presentArtistMenu, startArtistDelivery, enqueueBulkDelivery } from "./artist-menu.js";
 import { fetchPlaylistTracks, fetchAlbumTracks } from "../rj/tracks.js";
-import { isUserBanned, isUserAllowed, touchUser } from "../admin/users.js";
+import { isUserBanned, touchUser, recordUserActivity } from "../admin/users.js";
 import { incrementStat } from "../admin/stats.js";
 import { recordAdminError } from "../admin/ops-log.js";
 import { loadRuntimeConfig } from "../admin/runtime-config.js";
@@ -24,6 +24,7 @@ import { loadRuntimeConfig } from "../admin/runtime-config.js";
 async function handleStartPayload(chatId, payload, env, origin) {
   const resolved = await resolveStartPayload(env, payload);
   if (!resolved?.type || resolved.value == null || resolved.value === "") {
+    await recordUserActivity(env, chatId, { type: "start", detail: null });
     await sendMessage(
       chatId,
       "به ربات دانلود رادیو جوان خوش آمدید.\n\nلینک آهنگ/خواننده/پلی‌لیست بفرستید، از /search استفاده کنید، یا حالت اینلاین را امتحان کنید.\n\n" +
@@ -120,9 +121,6 @@ async function processUpdate(update, env, origin) {
       if (from?.id && (await isUserBanned(env, from.id))) {
         return;
       }
-      if (from?.id && !(await isUserAllowed(env, from.id))) {
-        return;
-      }
       await touchUser(env, from);
       await handleInlineQuery(update.inline_query, env);
       return;
@@ -135,12 +133,6 @@ async function processUpdate(update, env, origin) {
         return;
       }
       if (from?.id && from.id !== chatId && (await isUserBanned(env, from.id))) {
-        return;
-      }
-      if (chatId && !(await isUserAllowed(env, chatId))) {
-        return;
-      }
-      if (from?.id && from.id !== chatId && !(await isUserAllowed(env, from.id))) {
         return;
       }
       await touchUser(env, from, update.callback_query.message?.chat);
@@ -168,16 +160,8 @@ async function processUpdate(update, env, origin) {
       return;
     }
 
-    if (!(await isUserAllowed(env, chatId))) {
-      await denyAccess(chatId, token, { privateOnly: true, isPrivate });
-      return;
-    }
-
     if (message.from?.id && String(message.from.id) !== String(chatId)) {
       if (await isUserBanned(env, message.from.id)) {
-        return;
-      }
-      if (!(await isUserAllowed(env, message.from.id))) {
         return;
       }
     }

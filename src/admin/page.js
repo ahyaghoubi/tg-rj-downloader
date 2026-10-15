@@ -315,7 +315,71 @@ function renderAdminPage() {
     td.mono, th.mono { font-family: var(--mono); }
     tbody tr { cursor: pointer; transition: background 0.12s ease; }
     tbody tr:hover td { background: rgba(45, 212, 191, 0.06); }
+    tbody tr.selected td { background: rgba(45, 212, 191, 0.12); }
     tbody tr:last-child td { border-bottom: 0; }
+    .pager {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.55rem;
+      margin-top: 0.65rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .detail-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      align-items: center;
+      margin-bottom: 0.75rem;
+    }
+    .detail-head .title {
+      font-weight: 650;
+      font-size: 0.95rem;
+    }
+    .detail-head .mono { font-family: var(--mono); color: var(--muted); font-size: 0.82rem; }
+    .quota-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      margin: 0.35rem 0 0.85rem;
+      font-family: var(--mono);
+      font-size: 0.82rem;
+    }
+    .timeline, .simple-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 0.45rem;
+    }
+    .timeline li, .simple-list li {
+      background: rgba(11, 15, 20, 0.55);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.55rem 0.7rem;
+      font-size: 0.8rem;
+    }
+    .timeline .when, .simple-list .when {
+      display: block;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      margin-bottom: 0.2rem;
+    }
+    details.raw {
+      margin-top: 0.75rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    details.raw summary { cursor: pointer; margin-bottom: 0.35rem; }
+    .users-layout {
+      display: grid;
+      gap: 1rem;
+    }
+    @media (min-width: 960px) {
+      .users-layout { grid-template-columns: 1.15fr 1fr; align-items: start; }
+    }
     .links { display: flex; gap: 0.85rem; margin-left: auto; align-items: center; }
     .links a {
       color: var(--muted);
@@ -360,10 +424,8 @@ function renderAdminPage() {
 
     <section>
       <h2>Runtime settings</h2>
-      <p class="section-desc">Stored in KV — no redeploy needed. Queue delay is a base gap; the bot speeds up after clean sends and slows only after Telegram rate limits. Allowlist and VIP are separate flags.</p>
+      <p class="section-desc">Stored in KV — no redeploy needed. Queue delay is a base gap; the bot speeds up after clean sends and slows only after Telegram rate limits.</p>
       <div class="row actions">
-        <button type="button" id="btnAllowlistOn">Allowlist on</button>
-        <button type="button" class="secondary" id="btnAllowlistOff">Allowlist off</button>
         <button type="button" class="danger" id="btnQueuePause">Pause queue</button>
         <button type="button" class="secondary" id="btnQueueResume">Resume queue</button>
       </div>
@@ -381,39 +443,113 @@ function renderAdminPage() {
     </section>
 
     <section>
-      <h2>Known users</h2>
-      <p class="section-desc">Click a row to load that chat into jobs and user tools.</p>
-      <div class="row actions">
-        <button type="button" id="btnLoadUsers">Refresh list</button>
-        <button type="button" class="secondary" id="btnLoadBanned">Banned only</button>
+      <h2>Users</h2>
+      <p class="section-desc">Search, filter, and manage users. Select a row for quota, history, jobs, and messaging. VIP skips download quota; admins are unlimited separately.</p>
+      <div class="users-layout">
+        <div>
+          <div class="row">
+            <div class="field" style="flex:1;min-width:160px">
+              <label for="userSearch">Search</label>
+              <input id="userSearch" placeholder="chatId, @username, name" />
+            </div>
+            <div class="field">
+              <label for="userFilter">Filter</label>
+              <select id="userFilter">
+                <option value="all">All</option>
+                <option value="vip">VIP</option>
+                <option value="banned">Banned</option>
+                <option value="normal">Normal</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="userSort">Sort</label>
+              <select id="userSort">
+                <option value="lastSeen">Last seen</option>
+                <option value="downloads">Downloads today</option>
+              </select>
+            </div>
+          </div>
+          <div class="row actions">
+            <button type="button" id="btnLoadUsers">Refresh</button>
+            <button type="button" class="secondary" id="btnPrevUsers">Prev</button>
+            <button type="button" class="secondary" id="btnNextUsers">Next</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="mono">chatId</th>
+                  <th>Name</th>
+                  <th class="mono">Last seen</th>
+                  <th class="mono">Today</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="usersBody"><tr><td colspan="5" class="muted">Load the list to see users.</td></tr></tbody>
+            </table>
+          </div>
+          <div class="pager" id="usersPager">Showing 0</div>
+        </div>
+        <div>
+          <div class="row">
+            <div class="field" style="flex:1;min-width:140px">
+              <label for="userChatId">chatId</label>
+              <input id="userChatId" placeholder="224032101" class="mono" />
+            </div>
+            <button type="button" id="btnLoadUser">Load</button>
+          </div>
+          <div id="userDetailEmpty" class="muted" style="font-size:0.85rem;margin:0.5rem 0 0.85rem">Select a user or enter a chatId.</div>
+          <div id="userDetail" style="display:none">
+            <div class="detail-head" id="userDetailHead"></div>
+            <div class="quota-bar" id="userQuota"></div>
+            <div class="row actions">
+              <button type="button" class="danger" id="btnBan">Ban</button>
+              <button type="button" class="secondary" id="btnUnban">Unban</button>
+              <button type="button" id="btnVipOn">VIP</button>
+              <button type="button" class="secondary" id="btnVipOff">Normal</button>
+              <button type="button" class="secondary" id="btnClearRecents">Clear recents</button>
+              <button type="button" class="danger" id="btnWipeUser">Wipe</button>
+            </div>
+            <div class="row">
+              <div class="field" style="flex:1;min-width:160px">
+                <label for="userDailyLimit">Daily limit (empty = default)</label>
+                <input id="userDailyLimit" type="number" min="0" placeholder="e.g. 20" />
+              </div>
+              <button type="button" class="secondary" id="btnSaveQuota">Save quota</button>
+            </div>
+            <div class="row" style="align-items:stretch">
+              <div class="field" style="flex:1;width:100%">
+                <label for="userNote">Admin note</label>
+                <textarea id="userNote" placeholder="Optional note…"></textarea>
+              </div>
+            </div>
+            <div class="row actions">
+              <button type="button" class="secondary" id="btnSaveNote">Save note</button>
+            </div>
+            <div class="field" style="margin-top:0.65rem">
+              <label for="msgText">Message to user</label>
+              <textarea id="msgText" placeholder="Send a notice via the bot…"></textarea>
+            </div>
+            <div class="row actions" style="margin-top:0.55rem">
+              <button type="button" id="btnMessage">Send message</button>
+            </div>
+            <pre id="msgOut" class="muted"></pre>
+            <h2 style="margin-top:1rem">Jobs</h2>
+            <div class="row actions">
+              <button type="button" class="danger" id="btnCancel">Cancel active</button>
+              <button type="button" class="secondary" id="btnClearPending">Clear pending</button>
+              <button type="button" id="btnPromotePending">Promote pending</button>
+            </div>
+            <ul class="simple-list" id="userJobsList"></ul>
+            <h2 style="margin-top:1rem">Activity</h2>
+            <ul class="timeline" id="userActivityList"></ul>
+            <h2 style="margin-top:1rem">Recents</h2>
+            <ul class="simple-list" id="userRecentsList"></ul>
+            <details class="raw"><summary>Raw JSON</summary><pre id="userOut" class="muted"></pre></details>
+          </div>
+        </div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th class="mono">chatId</th>
-              <th>Name</th>
-              <th class="mono">Last seen</th>
-              <th>Status</th>
-              <th>Source</th>
-            </tr>
-          </thead>
-          <tbody id="usersBody"><tr><td colspan="5" class="muted">Load the list to see users.</td></tr></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section>
-      <h2>Chat jobs</h2>
-      <p class="section-desc">Inspect active/pending artist deliveries and intervene.</p>
-      <div class="row">
-        <div class="field"><label for="jobChatId">chatId</label><input id="jobChatId" placeholder="224032101" class="mono" /></div>
-        <button type="button" id="btnLoadChat">Load</button>
-        <button type="button" class="danger" id="btnCancel">Cancel active</button>
-        <button type="button" class="secondary" id="btnClearPending">Clear pending</button>
-        <button type="button" id="btnPromotePending">Promote pending now</button>
-      </div>
-      <pre id="jobOut" class="muted">Enter a chatId or pick a user from the table.</pre>
     </section>
 
     <section>
@@ -430,57 +566,10 @@ function renderAdminPage() {
       </div>
       <pre id="dlqOut" class="muted"></pre>
     </section>
-
-    <section>
-      <h2>User · message · VIP · allowlist · quota</h2>
-      <p class="section-desc">VIP skips download quota. Allowlist only matters when allowlist mode is on. Admins are unlimited separately.</p>
-      <div class="row">
-        <div class="field"><label for="userChatId">chatId</label><input id="userChatId" placeholder="224032101" /></div>
-        <button type="button" id="btnLoadUser">Load</button>
-        <button type="button" class="danger" id="btnBan">Ban</button>
-        <button type="button" class="secondary" id="btnUnban">Unban</button>
-        <button type="button" id="btnVipOn">VIP</button>
-        <button type="button" class="secondary" id="btnVipOff">Normal</button>
-        <button type="button" id="btnAllowOn">Allowlist</button>
-        <button type="button" class="secondary" id="btnAllowOff">Remove allowlist</button>
-      </div>
-      <div class="row actions">
-        <button type="button" class="secondary" id="btnClearRecents">Clear recents</button>
-        <button type="button" class="danger" id="btnWipeUser">Wipe user</button>
-      </div>
-      <div class="row">
-        <div class="field" style="flex:1;min-width:180px">
-          <label for="userDailyLimit">Daily limit (empty = default)</label>
-          <input id="userDailyLimit" type="number" min="0" placeholder="e.g. 20" />
-        </div>
-        <button type="button" class="secondary" id="btnSaveQuota">Save quota</button>
-      </div>
-      <div class="row" style="align-items:stretch">
-        <div class="field" style="flex:1;width:100%">
-          <label for="userNote">Admin note</label>
-          <textarea id="userNote" placeholder="Optional note…"></textarea>
-        </div>
-      </div>
-      <div class="row actions">
-        <button type="button" class="secondary" id="btnSaveNote">Save note</button>
-      </div>
-      <pre id="userOut" class="muted"></pre>
-      <div class="split split-2" style="margin-top:0.85rem">
-        <div>
-          <div class="field">
-            <label for="msgText">Message to user</label>
-            <textarea id="msgText" placeholder="Send a notice via the bot…"></textarea>
-          </div>
-          <div class="row actions" style="margin-top:0.55rem">
-            <button type="button" id="btnMessage">Send message</button>
-          </div>
-          <pre id="msgOut" class="muted"></pre>
-        </div>
-      </div>
-    </section>
   </main>
   <script>
     const $ = (id) => document.getElementById(id);
+    const usersState = { offset: 0, limit: 25, total: 0, selected: null };
     async function api(path, options = {}) {
       const res = await fetch(path, {
         credentials: "same-origin",
@@ -493,8 +582,18 @@ function renderAdminPage() {
     }
     function syncChatIds(value) {
       if (!value) return;
-      $("jobChatId").value = value;
       $("userChatId").value = value;
+      usersState.selected = value;
+    }
+    function esc(s) {
+      return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    }
+    function statusPills(u) {
+      const flags = [];
+      if (u.banned) flags.push('<span class="pill bad">banned</span>');
+      if (u.vip) flags.push('<span class="pill ok">vip</span>');
+      if (u.isAdmin) flags.push('<span class="pill ok">admin</span>');
+      return flags.length ? flags.join(" ") : '<span class="pill neutral">ok</span>';
     }
     function renderSystem(data) {
       const c = data.config || {};
@@ -514,7 +613,6 @@ function renderAdminPage() {
         ["Progress every", String(c.progressEvery)],
         ["Admin IDs", (c.adminUserIds || []).join(", ") || "(none)"],
         ["Daily download limit", String(c.defaultDailyDownloadLimit)],
-        ["Allowlist mode", String(c.runtime?.allowlistMode ?? false)],
         ["Queue paused", String(c.runtime?.queuePaused ?? false)],
         ["Today songs", String(t.songs || 0)],
         ["Today artists", String(t.artists || 0)],
@@ -536,71 +634,138 @@ function renderAdminPage() {
       $("cfgDailyLimit").value = r.overrides?.defaultDailyDownloadLimit ?? r.defaultDailyDownloadLimit ?? "";
       $("runtimeOut").textContent = JSON.stringify(r, null, 2);
     }
-    function renderUsers(users) {
+    function renderUsers(data) {
+      const users = data.users || [];
+      usersState.total = data.total || 0;
+      usersState.offset = data.offset || 0;
+      usersState.limit = data.limit || 25;
+      const start = users.length ? usersState.offset + 1 : 0;
+      const end = usersState.offset + users.length;
+      $("usersPager").textContent = "Showing " + start + "–" + end + " of " + usersState.total;
       if (!users.length) {
         $("usersBody").innerHTML = '<tr><td colspan="5" class="muted">No users found.</td></tr>';
         return;
       }
       $("usersBody").innerHTML = users.map((u) => {
         const name = u.username ? "@"+u.username : (u.firstName || "—");
-        const flags = [];
-        if (u.banned) flags.push('<span class="pill bad">banned</span>');
-        if (u.vip) flags.push('<span class="pill ok">vip</span>');
-        if (u.allowlisted) flags.push('<span class="pill ok">allow</span>');
-        const status = flags.length ? flags.join(" ") : '<span class="pill neutral">ok</span>';
-        return '<tr data-chat="'+u.chatId+'"><td class="mono">'+u.chatId+'</td><td>'+name+'</td><td class="mono">'+(u.lastSeenAt || "—")+'</td><td>'+status+'</td><td>'+u.source+'</td></tr>';
+        const today = u.downloadsToday?.count ?? 0;
+        const selected = String(u.chatId) === String(usersState.selected) ? " selected" : "";
+        return '<tr class="'+selected.trim()+'" data-chat="'+esc(u.chatId)+'"><td class="mono">'+esc(u.chatId)+'</td><td>'+esc(name)+'</td><td class="mono">'+(u.lastSeenAt || "—")+'</td><td class="mono">'+today+'</td><td>'+statusPills(u)+'</td></tr>';
       }).join("");
       [...$("usersBody").querySelectorAll("tr[data-chat]")].forEach((tr) => {
         tr.onclick = () => {
           syncChatIds(tr.getAttribute("data-chat"));
-          loadChat().catch((e) => { $("jobOut").textContent = e.message; });
+          loadUserDetail().catch((e) => { $("userOut").textContent = e.message; });
         };
       });
+    }
+    function renderDetail(data) {
+      $("userDetailEmpty").style.display = "none";
+      $("userDetail").style.display = "block";
+      const u = data.user || {};
+      const name = u.username ? "@" + u.username : (u.firstName || "User");
+      const pills = statusPills({ ...u, isAdmin: data.isAdmin });
+      $("userDetailHead").innerHTML = '<span class="title">'+esc(name)+'</span><span class="mono">'+esc(data.chatId)+'</span>'+pills;
+      const q = data.quota || {};
+      $("userQuota").textContent = q.unlimited
+        ? "Quota: unlimited · used today " + (q.used ?? 0)
+        : "Quota: " + (q.used ?? 0) + " / " + (q.limit ?? "?") + " today";
+      $("userNote").value = u.note || "";
+      if (u.dailyDownloadLimit != null) $("userDailyLimit").value = u.dailyDownloadLimit;
+      else $("userDailyLimit").value = "";
+      const jobs = [];
+      if (data.active) jobs.push({ when: "active", text: JSON.stringify(data.active) });
+      if (data.pending) jobs.push({ when: "pending", text: JSON.stringify(data.pending) });
+      if (data.cancel) jobs.push({ when: "cancel", text: JSON.stringify(data.cancel) });
+      $("userJobsList").innerHTML = jobs.length
+        ? jobs.map((j) => '<li><span class="when">'+esc(j.when)+'</span>'+esc(j.text)+'</li>').join("")
+        : '<li class="muted">No active or pending jobs.</li>';
+      const activity = data.activity || [];
+      $("userActivityList").innerHTML = activity.length
+        ? activity.map((e) => '<li><span class="when">'+esc(e.at || "")+' · '+esc(e.type)+'</span>'+esc(e.detail || "—")+'</li>').join("")
+        : '<li class="muted">No activity yet.</li>';
+      const recents = data.recents || [];
+      $("userRecentsList").innerHTML = recents.length
+        ? recents.map((r) => '<li><span class="when">'+esc(r.at || "")+' · '+esc(r.type)+'</span>'+esc(r.label || r.value || "—")+'</li>').join("")
+        : '<li class="muted">No recents.</li>';
+      $("userOut").textContent = JSON.stringify({
+        user: data.user,
+        quota: data.quota,
+        isAdmin: data.isAdmin,
+        activity: data.activity,
+        recents: data.recents,
+        active: data.active,
+        pending: data.pending,
+        cancel: data.cancel,
+      }, null, 2);
     }
     async function loadOverview() {
       const data = await api("/admin/api/overview");
       renderSystem(data);
     }
-    async function loadUsers(bannedOnly) {
-      const q = bannedOnly ? "?bannedOnly=1" : "";
-      const data = await api("/admin/api/users" + q);
-      renderUsers(data.users || []);
+    async function loadUsers() {
+      const params = new URLSearchParams({
+        q: $("userSearch").value.trim(),
+        filter: $("userFilter").value,
+        sort: $("userSort").value,
+        offset: String(usersState.offset),
+        limit: String(usersState.limit),
+      });
+      const data = await api("/admin/api/users?" + params.toString());
+      renderUsers(data);
     }
-    async function loadChat() {
-      const chatId = $("jobChatId").value.trim() || $("userChatId").value.trim();
+    async function loadUserDetail() {
+      const chatId = $("userChatId").value.trim();
       if (!chatId) throw new Error("chatId required");
       syncChatIds(chatId);
       const data = await api("/admin/api/chat?chatId=" + encodeURIComponent(chatId));
-      $("jobOut").textContent = JSON.stringify({ active: data.active, pending: data.pending, cancel: data.cancel }, null, 2);
-      $("userOut").textContent = JSON.stringify({ user: data.user, recents: data.recents }, null, 2);
-      if (data.user?.note) $("userNote").value = data.user.note;
-      if (data.user?.dailyDownloadLimit != null) $("userDailyLimit").value = data.user.dailyDownloadLimit;
-      else $("userDailyLimit").value = "";
+      renderDetail(data);
       return data;
     }
-    $("btnLoadUsers").onclick = async () => { try { await loadUsers(false); } catch (e) { $("usersBody").innerHTML = '<tr><td colspan="5">'+e.message+'</td></tr>'; } };
-    $("btnLoadBanned").onclick = async () => { try { await loadUsers(true); } catch (e) { $("usersBody").innerHTML = '<tr><td colspan="5">'+e.message+'</td></tr>'; } };
-    $("btnLoadChat").onclick = async () => { try { await loadChat(); } catch (e) { $("jobOut").textContent = e.message; } };
+    $("btnLoadUsers").onclick = async () => {
+      try { usersState.offset = 0; await loadUsers(); }
+      catch (e) { $("usersBody").innerHTML = '<tr><td colspan="5">'+esc(e.message)+'</td></tr>'; }
+    };
+    $("btnPrevUsers").onclick = async () => {
+      try {
+        usersState.offset = Math.max(0, usersState.offset - usersState.limit);
+        await loadUsers();
+      } catch (e) { $("usersPager").textContent = e.message; }
+    };
+    $("btnNextUsers").onclick = async () => {
+      try {
+        if (usersState.offset + usersState.limit >= usersState.total) return;
+        usersState.offset += usersState.limit;
+        await loadUsers();
+      } catch (e) { $("usersPager").textContent = e.message; }
+    };
+    let searchTimer = null;
+    $("userSearch").oninput = () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        usersState.offset = 0;
+        loadUsers().catch(() => {});
+      }, 250);
+    };
+    $("userFilter").onchange = () => { usersState.offset = 0; loadUsers().catch(() => {}); };
+    $("userSort").onchange = () => { usersState.offset = 0; loadUsers().catch(() => {}); };
     $("btnCancel").onclick = async () => {
       try {
-        const data = await api("/admin/api/chat/cancel", { method: "POST", body: JSON.stringify({ chatId: $("jobChatId").value.trim() }) });
-        $("jobOut").textContent = JSON.stringify(data, null, 2);
-        await loadChat();
-      } catch (e) { $("jobOut").textContent = e.message; }
+        await api("/admin/api/chat/cancel", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim() }) });
+        await loadUserDetail();
+      } catch (e) { $("userOut").textContent = e.message; }
     };
     $("btnClearPending").onclick = async () => {
       try {
-        const data = await api("/admin/api/chat/clear-pending", { method: "POST", body: JSON.stringify({ chatId: $("jobChatId").value.trim() }) });
-        $("jobOut").textContent = JSON.stringify(data, null, 2);
-        await loadChat();
-      } catch (e) { $("jobOut").textContent = e.message; }
+        await api("/admin/api/chat/clear-pending", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim() }) });
+        await loadUserDetail();
+      } catch (e) { $("userOut").textContent = e.message; }
     };
     $("btnPromotePending").onclick = async () => {
       try {
-        const data = await api("/admin/api/chat/promote-pending", { method: "POST", body: JSON.stringify({ chatId: $("jobChatId").value.trim() }) });
-        $("jobOut").textContent = JSON.stringify(data, null, 2);
-        await loadChat();
-      } catch (e) { $("jobOut").textContent = e.message; }
+        await api("/admin/api/chat/promote-pending", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim() }) });
+        await loadUserDetail();
+      } catch (e) { $("userOut").textContent = e.message; }
     };
     $("btnLoadDlq").onclick = async () => {
       try {
@@ -621,8 +786,8 @@ function renderAdminPage() {
       } catch (e) { $("dlqOut").textContent = e.message; }
     };
     $("btnLoadUser").onclick = async () => {
-      try { $("jobChatId").value = $("userChatId").value.trim(); await loadChat(); }
-      catch (e) { $("userOut").textContent = e.message; }
+      try { await loadUserDetail(); await loadUsers(); }
+      catch (e) { $("userOut").textContent = e.message; $("userDetailEmpty").textContent = e.message; }
     };
     async function patchUser(extra) {
       const data = await api("/admin/api/user", {
@@ -633,29 +798,29 @@ function renderAdminPage() {
           ...extra,
         }),
       });
-      $("userOut").textContent = JSON.stringify(data, null, 2);
-      await loadUsers(false);
+      await loadUserDetail();
+      await loadUsers();
+      return data;
     }
     $("btnBan").onclick = async () => { try { await patchUser({ banned: true }); } catch (e) { $("userOut").textContent = e.message; } };
     $("btnUnban").onclick = async () => { try { await patchUser({ banned: false }); } catch (e) { $("userOut").textContent = e.message; } };
     $("btnVipOn").onclick = async () => { try { await patchUser({ vip: true }); } catch (e) { $("userOut").textContent = e.message; } };
     $("btnVipOff").onclick = async () => { try { await patchUser({ vip: false }); } catch (e) { $("userOut").textContent = e.message; } };
-    $("btnAllowOn").onclick = async () => { try { await patchUser({ allowlisted: true }); } catch (e) { $("userOut").textContent = e.message; } };
-    $("btnAllowOff").onclick = async () => { try { await patchUser({ allowlisted: false }); } catch (e) { $("userOut").textContent = e.message; } };
     $("btnClearRecents").onclick = async () => {
       try {
         if (!confirm("Clear recent history for this user?")) return;
-        const data = await api("/admin/api/user/clear-recents", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim() }) });
-        $("userOut").textContent = JSON.stringify(data, null, 2);
-        await loadChat();
+        await api("/admin/api/user/clear-recents", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim() }) });
+        await loadUserDetail();
       } catch (e) { $("userOut").textContent = e.message; }
     };
     $("btnWipeUser").onclick = async () => {
       try {
-        if (!confirm("Wipe profile, recents, and jobs for this chatId?")) return;
-        const data = await api("/admin/api/user/wipe", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim() }) });
-        $("userOut").textContent = JSON.stringify(data, null, 2);
-        await loadUsers(false);
+        if (!confirm("Wipe profile, recents, activity, and jobs for this chatId?")) return;
+        await api("/admin/api/user/wipe", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim() }) });
+        $("userDetail").style.display = "none";
+        $("userDetailEmpty").style.display = "block";
+        $("userDetailEmpty").textContent = "User wiped.";
+        await loadUsers();
       } catch (e) { $("userOut").textContent = e.message; }
     };
     async function patchRuntime(extra) {
@@ -664,8 +829,6 @@ function renderAdminPage() {
       await loadOverview();
       return data;
     }
-    $("btnAllowlistOn").onclick = async () => { try { await patchRuntime({ allowlistMode: true }); } catch (e) { $("runtimeOut").textContent = e.message; } };
-    $("btnAllowlistOff").onclick = async () => { try { await patchRuntime({ allowlistMode: false }); } catch (e) { $("runtimeOut").textContent = e.message; } };
     $("btnQueuePause").onclick = async () => { try { await patchRuntime({ queuePaused: true }); } catch (e) { $("runtimeOut").textContent = e.message; } };
     $("btnQueueResume").onclick = async () => { try { await patchRuntime({ queuePaused: false }); } catch (e) { $("runtimeOut").textContent = e.message; } };
     $("btnSaveRuntime").onclick = async () => {
@@ -701,9 +864,10 @@ function renderAdminPage() {
       try {
         const data = await api("/admin/api/message", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim(), text: $("msgText").value.trim() }) });
         $("msgOut").textContent = JSON.stringify(data, null, 2);
+        await loadUserDetail();
       } catch (e) { $("msgOut").textContent = e.message; }
     };
-    Promise.all([loadOverview(), loadUsers(false)]).catch((e) => { $("headerStatus").textContent = e.message; });
+    Promise.all([loadOverview(), loadUsers()]).catch((e) => { $("headerStatus").textContent = e.message; });
     setInterval(() => { loadOverview().catch(() => {}); }, 10000);
     document.addEventListener("keydown", (ev) => {
       if (ev.target && /^(INPUT|TEXTAREA|SELECT)$/i.test(ev.target.tagName)) return;

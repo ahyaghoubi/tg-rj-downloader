@@ -3,10 +3,12 @@ import {
   ADMIN_USER_INDEX_LIMIT,
   USER_PROFILE_PREFIX,
   USER_RECENT_PREFIX,
+  USER_ACTIVITY_LIMIT,
   getJobStore,
   putKv,
   userKey,
   userRecentKey,
+  userActivityKey,
   queueChatActiveKey,
   queueChatPendingKey,
   queueChatCancelKey,
@@ -15,7 +17,6 @@ import {
   isAdminUser,
 } from "../config.js";
 import { utcDayKey } from "./stats.js";
-import { isAllowlistMode } from "./runtime-config.js";
 
 function emptyUser(chatId) {
   const now = new Date().toISOString();
@@ -27,7 +28,6 @@ function emptyUser(chatId) {
     lastSeenAt: now,
     banned: false,
     vip: false,
-    allowlisted: false,
     dailyDownloadLimit: null,
     downloadsToday: { day: utcDayKey(), count: 0 },
     note: "",
@@ -44,19 +44,49 @@ function normalizeUser(chatId, parsed = {}) {
           count: Number(parsed.downloadsToday.count) || 0,
         }
       : base.downloadsToday;
-  return {
+  const user = {
     ...base,
     ...parsed,
     chatId: String(parsed.chatId || chatId),
     banned: Boolean(parsed.banned),
     vip: Boolean(parsed.vip),
-    allowlisted: Boolean(parsed.allowlisted),
     dailyDownloadLimit:
       parsed.dailyDownloadLimit == null || parsed.dailyDownloadLimit === ""
         ? null
         : Number(parsed.dailyDownloadLimit),
     downloadsToday,
     note: typeof parsed.note === "string" ? parsed.note : "",
+  };
+  delete user.allowlisted;
+  return user;
+}
+
+function downloadsTodayCount(user) {
+  const day = utcDayKey();
+  if (!user?.downloadsToday || user.downloadsToday.day !== day) {
+    return 0;
+  }
+  return Number(user.downloadsToday.count) || 0;
+}
+
+function indexEntryFromProfile(profile) {
+  const day = utcDayKey();
+  const downloadsToday =
+    profile?.downloadsToday && profile.downloadsToday.day === day
+      ? { day, count: Number(profile.downloadsToday.count) || 0 }
+      : { day, count: 0 };
+  return {
+    chatId: String(profile.chatId),
+    username: profile.username || null,
+    firstName: profile.firstName || null,
+    lastSeenAt: profile.lastSeenAt || new Date().toISOString(),
+    banned: Boolean(profile.banned),
+    vip: Boolean(profile.vip),
+    downloadsToday,
+    dailyDownloadLimit:
+      profile.dailyDownloadLimit == null || profile.dailyDownloadLimit === ""
+        ? null
+        : Number(profile.dailyDownloadLimit),
   };
 }
 
@@ -90,15 +120,7 @@ async function rememberUserInIndex(env, profile) {
       const parsed = JSON.parse(raw);
       list = Array.isArray(parsed) ? parsed : [];
     }
-    const entry = {
-      chatId: String(profile.chatId),
-      username: profile.username || null,
-      firstName: profile.firstName || null,
-      lastSeenAt: profile.lastSeenAt || new Date().toISOString(),
-      banned: Boolean(profile.banned),
-      vip: Boolean(profile.vip),
-      allowlisted: Boolean(profile.allowlisted),
-    };
+    const entry = indexEntryFromProfile(profile);
     list = [entry, ...list.filter((item) => String(item.chatId) !== entry.chatId)].slice(
       0,
       ADMIN_USER_INDEX_LIMIT
@@ -132,24 +154,6 @@ async function isUserBanned(env, chatId) {
   return Boolean(user?.banned);
 }
 
-/**
- * When allowlist mode is on, only allowlisted chats and bot admins may use the bot.
- * VIP is unrelated — it only affects download quota.
- */
-async function isUserAllowed(env, chatId) {
-  if (chatId == null || chatId === "") {
-    return false;
-  }
-  if (isAdminUser(env, chatId)) {
-    return true;
-  }
-  if (!isAllowlistMode(env)) {
-    return true;
-  }
-  const user = await getUser(env, chatId);
-  return Boolean(user?.allowlisted);
-}
-
 async function touchUser(env, from, chat = null) {
   const chatId = chat?.id ?? from?.id;
   if (chatId == null) {
@@ -168,7 +172,6 @@ async function touchUser(env, from, chat = null) {
       firstSeenAt: existing?.firstSeenAt || now,
       banned: Boolean(existing?.banned),
       vip: Boolean(existing?.vip),
-      allowlisted: Boolean(existing?.allowlisted),
       dailyDownloadLimit: existing?.dailyDownloadLimit ?? null,
       downloadsToday: existing?.downloadsToday || { day: utcDayKey(), count: 0 },
       note: existing?.note || "",
@@ -186,7 +189,7 @@ async function touchUser(env, from, chat = null) {
 async function updateUserFlags(
   env,
   chatId,
-  { banned, note, vip, allowlisted, dailyDownloadLimit } = {}
+  { banned, note, vip, dailyDownloadLimit } = {}
 ) {
   const existing = (await getUser(env, chatId)) || emptyUser(chatId);
   if (typeof banned === "boolean") {
@@ -194,9 +197,6 @@ async function updateUserFlags(
   }
   if (typeof vip === "boolean") {
     existing.vip = vip;
-  }
-  if (typeof allowlisted === "boolean") {
-    existing.allowlisted = allowlisted;
   }
   if (typeof note === "string") {
     existing.note = note.slice(0, 500);
@@ -228,6 +228,7 @@ async function wipeUser(env, chatId) {
   await Promise.all([
     kv.delete(userKey(id)),
     kv.delete(userRecentKey(id)),
+    kv.delete(userActivityKey(id)),
     kv.delete(queueChatActiveKey(id)),
     kv.delete(queueChatPendingKey(id)),
     kv.delete(queueChatCancelKey(id)),
@@ -261,6 +262,20 @@ function resolveDailyLimit(env, user) {
     return Number(user.dailyDownloadLimit);
   }
   return getDefaultDailyDownloadLimit(env);
+}
+
+function getQuotaSnapshot(env, user) {
+  const day = utcDayKey();
+  const used = downloadsTodayCount(user);
+  const limit = resolveDailyLimit(env, user);
+  const unlimited = limit == null;
+  return {
+    day,
+    used,
+    limit: unlimited ? null : limit,
+    unlimited,
+    remaining: unlimited ? null : Math.max(0, limit - used),
+  };
 }
 
 /**
@@ -310,6 +325,43 @@ async function checkAndConsumeQuota(env, chatId, amount = 1) {
   };
 }
 
+async function readUserActivity(env, chatId) {
+  const kv = getJobStore(env);
+  if (!kv || chatId == null) {
+    return [];
+  }
+  try {
+    const raw = await kv.get(userActivityKey(chatId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function recordUserActivity(env, chatId, { type, detail = null } = {}) {
+  const kv = getJobStore(env);
+  if (!kv || chatId == null || !type) {
+    return;
+  }
+  try {
+    const existing = await readUserActivity(env, chatId);
+    const event = {
+      type: String(type),
+      detail: detail == null ? null : String(detail).slice(0, 200),
+      at: new Date().toISOString(),
+    };
+    const next = [event, ...existing].slice(0, USER_ACTIVITY_LIMIT);
+    await putKv(kv, userActivityKey(chatId), JSON.stringify(next), {
+      expirationTtl: 90 * 24 * 60 * 60,
+    });
+  } catch (err) {
+    if (!(err instanceof KvWriteLimitError)) {
+      console.warn(`recordUserActivity failed for ${chatId}: ${err.message}`);
+    }
+  }
+}
+
 async function listKvKeys(kv, prefix, limit = 200) {
   if (!kv?.list) {
     return [];
@@ -326,13 +378,47 @@ async function listKvKeys(kv, prefix, limit = 200) {
   return names;
 }
 
-async function listKnownUsers(env, { limit = 50, bannedOnly = false } = {}) {
+function listEntryFromUser(user, source) {
+  return {
+    chatId: String(user.chatId),
+    username: user.username || null,
+    firstName: user.firstName || null,
+    lastSeenAt: user.lastSeenAt || null,
+    banned: Boolean(user.banned),
+    vip: Boolean(user.vip),
+    downloadsToday: {
+      day: user.downloadsToday?.day || utcDayKey(),
+      count: downloadsTodayCount(user),
+    },
+    dailyDownloadLimit:
+      user.dailyDownloadLimit == null ? null : Number(user.dailyDownloadLimit),
+    note: user.note || "",
+    source,
+    hasProfile: source !== "recents",
+    isAdmin: false,
+  };
+}
+
+async function listKnownUsers(
+  env,
+  {
+    q = "",
+    filter = "all",
+    sort = "lastSeen",
+    offset = 0,
+    limit = 25,
+    bannedOnly = false,
+  } = {}
+) {
   const kv = getJobStore(env);
+  const pageLimit = Math.min(Math.max(1, Number(limit) || 25), 100);
+  const pageOffset = Math.max(0, Number(offset) || 0);
   if (!kv) {
-    return [];
+    return { users: [], total: 0, offset: pageOffset, limit: pageLimit };
   }
 
   const byId = new Map();
+  const day = utcDayKey();
 
   try {
     const indexRaw = await kv.get(ADMIN_USER_INDEX_KEY);
@@ -343,6 +429,10 @@ async function listKnownUsers(env, { limit = 50, bannedOnly = false } = {}) {
           if (!item?.chatId) {
             continue;
           }
+          const downloadsToday =
+            item.downloadsToday && item.downloadsToday.day === day
+              ? { day, count: Number(item.downloadsToday.count) || 0 }
+              : { day, count: 0 };
           byId.set(String(item.chatId), {
             chatId: String(item.chatId),
             username: item.username || null,
@@ -350,9 +440,14 @@ async function listKnownUsers(env, { limit = 50, bannedOnly = false } = {}) {
             lastSeenAt: item.lastSeenAt || null,
             banned: Boolean(item.banned),
             vip: Boolean(item.vip),
-            allowlisted: Boolean(item.allowlisted),
+            downloadsToday,
+            dailyDownloadLimit:
+              item.dailyDownloadLimit == null || item.dailyDownloadLimit === ""
+                ? null
+                : Number(item.dailyDownloadLimit),
             source: "index",
             hasProfile: true,
+            isAdmin: false,
           });
         }
       }
@@ -372,18 +467,7 @@ async function listKnownUsers(env, { limit = 50, bannedOnly = false } = {}) {
       if (!user) {
         continue;
       }
-      byId.set(chatId, {
-        chatId,
-        username: user.username,
-        firstName: user.firstName,
-        lastSeenAt: user.lastSeenAt,
-        banned: user.banned,
-        vip: user.vip,
-        allowlisted: user.allowlisted,
-        note: user.note || "",
-        source: "profile",
-        hasProfile: true,
-      });
+      byId.set(chatId, listEntryFromUser(user, "profile"));
     }
   } catch (err) {
     console.warn(`listKnownUsers profile scan failed: ${err.message}`);
@@ -402,20 +486,77 @@ async function listKnownUsers(env, { limit = 50, bannedOnly = false } = {}) {
         firstName: null,
         lastSeenAt: null,
         banned: false,
+        vip: false,
+        downloadsToday: { day, count: 0 },
+        dailyDownloadLimit: null,
         source: "recents",
         hasProfile: false,
+        isAdmin: false,
       });
     }
   } catch (err) {
     console.warn(`listKnownUsers recents scan failed: ${err.message}`);
   }
 
-  let users = [...byId.values()];
-  if (bannedOnly) {
-    users = users.filter((user) => user.banned);
+  let users = [...byId.values()].map((user) => ({
+    ...user,
+    isAdmin: isAdminUser(env, user.chatId),
+    downloadsToday: {
+      day: user.downloadsToday?.day || day,
+      count:
+        user.downloadsToday?.day === day ? Number(user.downloadsToday.count) || 0 : 0,
+    },
+  }));
+
+  const query = String(q || "")
+    .trim()
+    .toLowerCase();
+  if (query) {
+    users = users.filter((user) => {
+      const hay = [
+        user.chatId,
+        user.username || "",
+        user.firstName || "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(query);
+    });
   }
-  users.sort((a, b) => String(b.lastSeenAt || "").localeCompare(String(a.lastSeenAt || "")));
-  return users.slice(0, limit);
+
+  let effectiveFilter = String(filter || "all").toLowerCase();
+  if (bannedOnly) {
+    effectiveFilter = "banned";
+  }
+  if (effectiveFilter === "vip") {
+    users = users.filter((user) => user.vip);
+  } else if (effectiveFilter === "banned") {
+    users = users.filter((user) => user.banned);
+  } else if (effectiveFilter === "normal") {
+    users = users.filter((user) => !user.vip && !user.banned && !user.isAdmin);
+  } else if (effectiveFilter === "admin") {
+    users = users.filter((user) => user.isAdmin);
+  }
+
+  if (sort === "downloads") {
+    users.sort((a, b) => {
+      const diff = (b.downloadsToday?.count || 0) - (a.downloadsToday?.count || 0);
+      if (diff !== 0) {
+        return diff;
+      }
+      return String(b.lastSeenAt || "").localeCompare(String(a.lastSeenAt || ""));
+    });
+  } else {
+    users.sort((a, b) => String(b.lastSeenAt || "").localeCompare(String(a.lastSeenAt || "")));
+  }
+
+  const total = users.length;
+  return {
+    users: users.slice(pageOffset, pageOffset + pageLimit),
+    total,
+    offset: pageOffset,
+    limit: pageLimit,
+  };
 }
 
 export {
@@ -423,7 +564,6 @@ export {
   getUser,
   putUser,
   isUserBanned,
-  isUserAllowed,
   touchUser,
   updateUserFlags,
   clearUserRecents,
@@ -431,5 +571,8 @@ export {
   listKnownUsers,
   rememberUserInIndex,
   resolveDailyLimit,
+  getQuotaSnapshot,
   checkAndConsumeQuota,
+  readUserActivity,
+  recordUserActivity,
 };

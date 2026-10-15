@@ -5,7 +5,7 @@ import { sendMessage } from "../telegram/send.js";
 import { makeCallbackData } from "./callback-store.js";
 import { enqueueArtistQueueDelivery } from "../delivery/queue.js";
 import { incrementStat } from "../admin/stats.js";
-import { checkAndConsumeQuota } from "../admin/users.js";
+import { checkAndConsumeQuota, recordUserActivity } from "../admin/users.js";
 
 async function buildArtistChoiceKeyboard(env, artistName, catalog) {
   const rows = [];
@@ -112,6 +112,10 @@ async function enqueueBulkDelivery(env, chatId, label, tracks, { skipQuota = fal
           token
         );
       } else {
+        await recordUserActivity(env, chatId, {
+          type: "quota_blocked",
+          detail: `${quota.used}/${quota.limit}`,
+        });
         await sendMessage(
           chatId,
           `سهمیهٔ دانلود روزانه تمام شده است (${quota.used}/${quota.limit}). فردا دوباره تلاش کنید.`,
@@ -123,6 +127,10 @@ async function enqueueBulkDelivery(env, chatId, label, tracks, { skipQuota = fal
   }
   try {
     await enqueueArtistQueueDelivery(env, chatId, label, deliveryTracks);
+    await recordUserActivity(env, chatId, {
+      type: "artist_start",
+      detail: `${label} (${deliveryTracks.length})`,
+    });
   } catch (err) {
     console.error(`Queue delivery failed for ${label}: ${err.message}`);
     await sendMessage(chatId, `❌ خطا در صف ارسال: ${err.message}`, token);
