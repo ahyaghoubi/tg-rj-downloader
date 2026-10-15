@@ -122,7 +122,7 @@ A Cloudflare Worker script that turns your Telegram bot into a Radio Javan media
      - `BOT_TOKEN` — your Telegram Bot Token (**required**, set as a Worker secret or variable)
      - `JOB_RUNNER_SECRET` — shared secret that protects `POST /internal/warm-artist` (**required for cache warm**)
      - `ADMIN_TOKEN` — password for the `/admin` dashboard (**required for admin UI**)
-     - `DEFAULT_DAILY_DOWNLOAD_LIMIT` — optional daily download cap per non-VIP user (default `80`)
+     - `DEFAULT_DAILY_DOWNLOAD_LIMIT` — optional daily download cap per non-VIP / non-admin user (default `80`; overridable in `/admin` runtime settings)
      - `RJ_API_KEY` — Radio Javan API key (optional; defaults built in)
      - `RJ_USER_AGENT` — Radio Javan client user agent (optional; defaults built in)
    - Create and bind the KV namespaces and Queue (see [Cloudflare Bindings](#cloudflare-bindings)):
@@ -223,6 +223,8 @@ Artist delivery uses [Cloudflare Queues](https://developers.cloudflare.com/queue
    ```
 
    Open the ops dashboard at `https://<your-worker>.workers.dev/admin` and sign in with `ADMIN_TOKEN`.
+
+   Runtime controls on `/admin` (KV, no redeploy): allowlist mode, queue pause, safe numeric overrides (queue delay, progress every, daily limit, bulk cache writes), per-user VIP / allowlist / wipe.
 
 **Notes**
 

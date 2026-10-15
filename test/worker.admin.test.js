@@ -327,6 +327,76 @@ test("quota blocks downloads and VIP bypasses limit", async () => {
   assert.equal((await checkAndConsumeQuota(env, "55", 5)).ok, true);
 });
 
+test("admin user id is unlimited without VIP flag", async () => {
+  const { checkAndConsumeQuota, updateUserFlags } = await import("../src/admin/users.js");
+  const env = adminEnv({ DEFAULT_DAILY_DOWNLOAD_LIMIT: "1", ADMIN_USER_IDS: "224032101" });
+  await updateUserFlags(env, "224032101", { vip: false });
+  const first = await checkAndConsumeQuota(env, "224032101", 1);
+  const second = await checkAndConsumeQuota(env, "224032101", 5);
+  assert.equal(first.ok, true);
+  assert.equal(first.unlimited, true);
+  assert.equal(second.ok, true);
+  assert.equal(second.unlimited, true);
+  // VIP stays a separate flag — admin unlimited does not set vip
+  assert.equal(second.user.vip, false);
+});
+
+test("allowlist mode blocks non-allowlisted users but not admins", async () => {
+  const { updateUserFlags, isUserAllowed } = await import("../src/admin/users.js");
+  const { saveRuntimeConfig, loadRuntimeConfig } = await import("../src/admin/runtime-config.js");
+  const env = adminEnv({ ADMIN_USER_IDS: "224032101" });
+  await saveRuntimeConfig(env, { allowlistMode: true });
+  await loadRuntimeConfig(env, { force: true });
+  await updateUserFlags(env, "99", { allowlisted: false });
+  await updateUserFlags(env, "88", { allowlisted: true });
+  assert.equal(await isUserAllowed(env, "99"), false);
+  assert.equal(await isUserAllowed(env, "88"), true);
+  assert.equal(await isUserAllowed(env, "224032101"), true);
+  await saveRuntimeConfig(env, { allowlistMode: false });
+  await loadRuntimeConfig(env, { force: true });
+  assert.equal(await isUserAllowed(env, "99"), true);
+});
+
+test("runtime config overrides delay and queue pause endpoint works", async () => {
+  const { saveRuntimeConfig, loadRuntimeConfig, isQueuePaused } = await import(
+    "../src/admin/runtime-config.js"
+  );
+  const { getArtistQueueDelaySeconds } = await import("../src/config.js");
+  const env = adminEnv({ ARTIST_QUEUE_DELAY_SECONDS: "2" });
+  await saveRuntimeConfig(env, { artistQueueDelaySeconds: 9, queuePaused: true });
+  await loadRuntimeConfig(env, { force: true });
+  assert.equal(getArtistQueueDelaySeconds(env), 9);
+  assert.equal(isQueuePaused(env), true);
+
+  const cookie = await sessionCookie(env);
+  const response = await worker.fetch(
+    new Request("https://worker.test/admin/api/runtime", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ queuePaused: false, artistQueueDelaySeconds: null }),
+    }),
+    env,
+    createMockCtx()
+  );
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.runtime.queuePaused, false);
+  assert.equal(body.runtime.artistQueueDelaySeconds, 2);
+});
+
+test("wipe user clears profile and recents", async () => {
+  const { updateUserFlags, wipeUser, getUser } = await import("../src/admin/users.js");
+  const { pushUserRecent, readUserRecents } = await import("../src/bot/commands.js");
+  const env = adminEnv();
+  await updateUserFlags(env, "77", { note: "temp", vip: true });
+  await pushUserRecent(env, "77", { type: "song", value: "x", label: "x" });
+  assert.ok(await getUser(env, "77"));
+  assert.equal((await readUserRecents(env, "77")).length, 1);
+  await wipeUser(env, "77");
+  assert.equal(await getUser(env, "77"), null);
+  assert.equal((await readUserRecents(env, "77")).length, 0);
+});
+
 test("admin force-send and deep-link endpoints work", async () => {
   const env = adminEnv({ BOT_USERNAME: "rjdlbot" });
   const bodies = [];

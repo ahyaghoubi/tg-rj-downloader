@@ -6,11 +6,16 @@ import {
   getJobStore,
   putKv,
   userKey,
+  userRecentKey,
+  queueChatActiveKey,
+  queueChatPendingKey,
+  queueChatCancelKey,
   KvWriteLimitError,
   getDefaultDailyDownloadLimit,
   isAdminUser,
 } from "../config.js";
 import { utcDayKey } from "./stats.js";
+import { isAllowlistMode } from "./runtime-config.js";
 
 function emptyUser(chatId) {
   const now = new Date().toISOString();
@@ -22,6 +27,7 @@ function emptyUser(chatId) {
     lastSeenAt: now,
     banned: false,
     vip: false,
+    allowlisted: false,
     dailyDownloadLimit: null,
     downloadsToday: { day: utcDayKey(), count: 0 },
     note: "",
@@ -44,6 +50,7 @@ function normalizeUser(chatId, parsed = {}) {
     chatId: String(parsed.chatId || chatId),
     banned: Boolean(parsed.banned),
     vip: Boolean(parsed.vip),
+    allowlisted: Boolean(parsed.allowlisted),
     dailyDownloadLimit:
       parsed.dailyDownloadLimit == null || parsed.dailyDownloadLimit === ""
         ? null
@@ -90,6 +97,7 @@ async function rememberUserInIndex(env, profile) {
       lastSeenAt: profile.lastSeenAt || new Date().toISOString(),
       banned: Boolean(profile.banned),
       vip: Boolean(profile.vip),
+      allowlisted: Boolean(profile.allowlisted),
     };
     list = [entry, ...list.filter((item) => String(item.chatId) !== entry.chatId)].slice(
       0,
@@ -124,6 +132,24 @@ async function isUserBanned(env, chatId) {
   return Boolean(user?.banned);
 }
 
+/**
+ * When allowlist mode is on, only allowlisted chats and bot admins may use the bot.
+ * VIP is unrelated — it only affects download quota.
+ */
+async function isUserAllowed(env, chatId) {
+  if (chatId == null || chatId === "") {
+    return false;
+  }
+  if (isAdminUser(env, chatId)) {
+    return true;
+  }
+  if (!isAllowlistMode(env)) {
+    return true;
+  }
+  const user = await getUser(env, chatId);
+  return Boolean(user?.allowlisted);
+}
+
 async function touchUser(env, from, chat = null) {
   const chatId = chat?.id ?? from?.id;
   if (chatId == null) {
@@ -141,6 +167,10 @@ async function touchUser(env, from, chat = null) {
       lastSeenAt: now,
       firstSeenAt: existing?.firstSeenAt || now,
       banned: Boolean(existing?.banned),
+      vip: Boolean(existing?.vip),
+      allowlisted: Boolean(existing?.allowlisted),
+      dailyDownloadLimit: existing?.dailyDownloadLimit ?? null,
+      downloadsToday: existing?.downloadsToday || { day: utcDayKey(), count: 0 },
       note: existing?.note || "",
       updatedAt: now,
     };
@@ -153,13 +183,20 @@ async function touchUser(env, from, chat = null) {
   }
 }
 
-async function updateUserFlags(env, chatId, { banned, note, vip, dailyDownloadLimit } = {}) {
+async function updateUserFlags(
+  env,
+  chatId,
+  { banned, note, vip, allowlisted, dailyDownloadLimit } = {}
+) {
   const existing = (await getUser(env, chatId)) || emptyUser(chatId);
   if (typeof banned === "boolean") {
     existing.banned = banned;
   }
   if (typeof vip === "boolean") {
     existing.vip = vip;
+  }
+  if (typeof allowlisted === "boolean") {
+    existing.allowlisted = allowlisted;
   }
   if (typeof note === "string") {
     existing.note = note.slice(0, 500);
@@ -173,7 +210,50 @@ async function updateUserFlags(env, chatId, { banned, note, vip, dailyDownloadLi
   return putUser(env, existing);
 }
 
+async function clearUserRecents(env, chatId) {
+  const kv = getJobStore(env);
+  if (!kv || chatId == null) {
+    return { ok: false, error: "missing store or chatId" };
+  }
+  await kv.delete(userRecentKey(chatId));
+  return { ok: true, chatId: String(chatId), cleared: "recents" };
+}
+
+async function wipeUser(env, chatId) {
+  const kv = getJobStore(env);
+  if (!kv || chatId == null) {
+    return { ok: false, error: "missing store or chatId" };
+  }
+  const id = String(chatId);
+  await Promise.all([
+    kv.delete(userKey(id)),
+    kv.delete(userRecentKey(id)),
+    kv.delete(queueChatActiveKey(id)),
+    kv.delete(queueChatPendingKey(id)),
+    kv.delete(queueChatCancelKey(id)),
+  ]);
+  try {
+    const raw = await kv.get(ADMIN_USER_INDEX_KEY);
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const next = list.filter((item) => String(item.chatId) !== id);
+        await putKv(kv, ADMIN_USER_INDEX_KEY, JSON.stringify(next), {
+          expirationTtl: 180 * 24 * 60 * 60,
+        });
+      }
+    }
+  } catch (err) {
+    if (!(err instanceof KvWriteLimitError)) {
+      console.warn(`wipeUser index cleanup failed: ${err.message}`);
+    }
+  }
+  return { ok: true, chatId: id, wiped: true };
+}
+
 function resolveDailyLimit(env, user) {
+  // Separate paths to unlimited: VIP flag, or bot admin (ADMIN_USER_IDS).
+  // Admin is not treated as VIP — both simply skip the daily cap.
   if (user?.vip || isAdminUser(env, user?.chatId)) {
     return null;
   }
@@ -270,6 +350,7 @@ async function listKnownUsers(env, { limit = 50, bannedOnly = false } = {}) {
             lastSeenAt: item.lastSeenAt || null,
             banned: Boolean(item.banned),
             vip: Boolean(item.vip),
+            allowlisted: Boolean(item.allowlisted),
             source: "index",
             hasProfile: true,
           });
@@ -298,6 +379,7 @@ async function listKnownUsers(env, { limit = 50, bannedOnly = false } = {}) {
         lastSeenAt: user.lastSeenAt,
         banned: user.banned,
         vip: user.vip,
+        allowlisted: user.allowlisted,
         note: user.note || "",
         source: "profile",
         hasProfile: true,
@@ -341,8 +423,11 @@ export {
   getUser,
   putUser,
   isUserBanned,
+  isUserAllowed,
   touchUser,
   updateUserFlags,
+  clearUserRecents,
+  wipeUser,
   listKnownUsers,
   rememberUserInIndex,
   resolveDailyLimit,

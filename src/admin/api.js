@@ -1,22 +1,32 @@
 import {
   ARTIST_DELIVERY_QUEUE_NAME,
   ARTIST_DELIVERY_DLQ_NAME,
+  ADMIN_DLQ_EVENTS_KEY,
   getBotToken,
   getJobStore,
+  getFileCacheStore,
   getAdminUserIds,
   getArtistQueueDelaySeconds,
   getArtistProgressEvery,
   getMaxAudioUrlAttempts,
+  getDefaultDailyDownloadLimit,
   shouldCacheArtistUploads,
   queueChatActiveKey,
   queueChatPendingKey,
   queueChatCancelKey,
+  putKv,
 } from "../config.js";
 import { normalizeArtistName } from "../rj/urls.js";
-import { sendMessage } from "../telegram/send.js";
+import { sendMessage, sendTrackToUser } from "../telegram/send.js";
 import { cancelChatArtistDelivery, readUserRecents } from "../bot/commands.js";
 import { warmArtistMissingTracks } from "../delivery/warm.js";
-import { getUser, updateUserFlags, listKnownUsers } from "./users.js";
+import {
+  getUser,
+  updateUserFlags,
+  listKnownUsers,
+  clearUserRecents,
+  wipeUser,
+} from "./users.js";
 import {
   buildAdminCookie,
   createAdminSessionValue,
@@ -27,15 +37,18 @@ import { renderAdminPage, renderLoginPage } from "./page.js";
 import { readDlqEvents } from "./dlq-log.js";
 import { readDailyStats, readRecentDailyStats } from "./stats.js";
 import { recordAdminAudit, readAdminErrors, readAdminAudit } from "./ops-log.js";
+import {
+  loadRuntimeConfig,
+  saveRuntimeConfig,
+  effectiveConfigSnapshot,
+} from "./runtime-config.js";
 import { makeStartPayload, buildBotStartLink } from "../bot/start-payload.js";
 import { resolveDownloadUrls } from "../rj/tracks.js";
-import { sendTrackToUser } from "../telegram/send.js";
 import {
   getCachedTelegramFile,
   deleteCachedTelegramFile,
   getTelegramFileCacheKey,
 } from "../cache/telegram-file.js";
-import { getFileCacheStore, getDefaultDailyDownloadLimit } from "../config.js";
 
 function jsonResponse(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -118,6 +131,7 @@ async function handleAdminLogout() {
 }
 
 async function handleOverview(env) {
+  await loadRuntimeConfig(env);
   const token = getBotToken(env);
   let bot = null;
   let botOk = false;
@@ -183,6 +197,7 @@ async function handleOverview(env) {
       hasArtistQueue: Boolean(env.ARTIST_QUEUE),
       hasJobStore: Boolean(getJobStore(env)),
       hasFileCache: Boolean(env.TELEGRAM_FILE_CACHE),
+      runtime: effectiveConfigSnapshot(env),
     },
   });
 }
@@ -336,6 +351,11 @@ async function handleAdminRequest(request, env, ctx) {
     } else if (body.vip === "true" || body.vip === "false") {
       patch.vip = body.vip === "true";
     }
+    if (typeof body.allowlisted === "boolean") {
+      patch.allowlisted = body.allowlisted;
+    } else if (body.allowlisted === "true" || body.allowlisted === "false") {
+      patch.allowlisted = body.allowlisted === "true";
+    }
     if (typeof body.note === "string") {
       patch.note = body.note;
     }
@@ -352,10 +372,82 @@ async function handleAdminRequest(request, env, ctx) {
         detail: JSON.stringify({
           banned: user.banned,
           vip: user.vip,
+          allowlisted: user.allowlisted,
           dailyDownloadLimit: user.dailyDownloadLimit,
         }),
       });
       return jsonResponse({ ok: true, user });
+    } catch (err) {
+      return jsonResponse({ ok: false, error: err.message }, 500);
+    }
+  }
+
+  if (path === "/admin/api/user/clear-recents" && request.method === "POST") {
+    const body = await readJsonOrForm(request);
+    const chatId = body.chatId;
+    if (!chatId) {
+      return jsonResponse({ ok: false, error: "chatId required" }, 400);
+    }
+    const result = await clearUserRecents(env, String(chatId));
+    await recordAdminAudit(env, { action: "user.clear-recents", chatId });
+    return jsonResponse(result);
+  }
+
+  if (path === "/admin/api/user/wipe" && request.method === "POST") {
+    const body = await readJsonOrForm(request);
+    const chatId = body.chatId;
+    if (!chatId) {
+      return jsonResponse({ ok: false, error: "chatId required" }, 400);
+    }
+    const result = await wipeUser(env, String(chatId));
+    await recordAdminAudit(env, { action: "user.wipe", chatId });
+    return jsonResponse(result);
+  }
+
+  if (path === "/admin/api/runtime" && request.method === "GET") {
+    await loadRuntimeConfig(env);
+    return jsonResponse({ ok: true, runtime: effectiveConfigSnapshot(env) });
+  }
+
+  if (path === "/admin/api/runtime" && request.method === "POST") {
+    const body = await readJsonOrForm(request);
+    const patch = {};
+    if (typeof body.allowlistMode === "boolean") {
+      patch.allowlistMode = body.allowlistMode;
+    } else if (body.allowlistMode === "true" || body.allowlistMode === "false") {
+      patch.allowlistMode = body.allowlistMode === "true";
+    }
+    if (typeof body.queuePaused === "boolean") {
+      patch.queuePaused = body.queuePaused;
+    } else if (body.queuePaused === "true" || body.queuePaused === "false") {
+      patch.queuePaused = body.queuePaused === "true";
+    }
+    for (const key of [
+      "artistQueueDelaySeconds",
+      "artistProgressEvery",
+      "maxAudioUrlAttempts",
+      "defaultDailyDownloadLimit",
+    ]) {
+      if (body[key] === null || body[key] === "") {
+        patch[key] = null;
+      } else if (body[key] != null) {
+        patch[key] = Number(body[key]);
+      }
+    }
+    if (body.enableBulkCacheWrites === null || body.enableBulkCacheWrites === "") {
+      patch.enableBulkCacheWrites = null;
+    } else if (typeof body.enableBulkCacheWrites === "boolean") {
+      patch.enableBulkCacheWrites = body.enableBulkCacheWrites;
+    } else if (body.enableBulkCacheWrites === "true" || body.enableBulkCacheWrites === "false") {
+      patch.enableBulkCacheWrites = body.enableBulkCacheWrites === "true";
+    }
+    try {
+      const saved = await saveRuntimeConfig(env, patch);
+      await recordAdminAudit(env, {
+        action: "runtime.update",
+        detail: JSON.stringify(patch),
+      });
+      return jsonResponse({ ok: true, runtime: effectiveConfigSnapshot(env), saved });
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 500);
     }
@@ -436,6 +528,29 @@ async function handleAdminRequest(request, env, ctx) {
   if (path === "/admin/api/dlq" && request.method === "GET") {
     const events = await readDlqEvents(env);
     return jsonResponse({ ok: true, events });
+  }
+
+  if (path === "/admin/api/dlq/discard" && request.method === "POST") {
+    const body = await readJsonOrForm(request);
+    const index = Number(body.index);
+    const kv = getJobStore(env);
+    if (!kv) {
+      return jsonResponse({ ok: false, error: "ARTIST_JOB_STORE missing" }, 500);
+    }
+    const events = await readDlqEvents(env);
+    if (!Number.isFinite(index) || index < 0 || index >= events.length) {
+      return jsonResponse({ ok: false, error: "invalid index" }, 400);
+    }
+    const [removed] = events.splice(index, 1);
+    await putKv(kv, ADMIN_DLQ_EVENTS_KEY, JSON.stringify(events), {
+      expirationTtl: 90 * 24 * 60 * 60,
+    });
+    await recordAdminAudit(env, {
+      action: "dlq.discard",
+      chatId: removed?.chatId,
+      detail: removed?.artistName || null,
+    });
+    return jsonResponse({ ok: true, removed, remaining: events.length });
   }
 
   if (path === "/admin/api/cache" && request.method === "GET") {

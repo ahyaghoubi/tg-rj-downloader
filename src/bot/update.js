@@ -16,9 +16,10 @@ import { handleUrl } from "./handle-url.js";
 import { resolveStartPayload } from "./start-payload.js";
 import { presentArtistMenu, startArtistDelivery, enqueueBulkDelivery } from "./artist-menu.js";
 import { fetchPlaylistTracks, fetchAlbumTracks } from "../rj/tracks.js";
-import { isUserBanned, touchUser } from "../admin/users.js";
+import { isUserBanned, isUserAllowed, touchUser } from "../admin/users.js";
 import { incrementStat } from "../admin/stats.js";
 import { recordAdminError } from "../admin/ops-log.js";
+import { loadRuntimeConfig } from "../admin/runtime-config.js";
 
 async function handleStartPayload(chatId, payload, env, origin) {
   const resolved = await resolveStartPayload(env, payload);
@@ -96,6 +97,13 @@ async function handleStartPayload(chatId, payload, env, origin) {
   );
 }
 
+async function denyAccess(chatId, token, { privateOnly = false, isPrivate = true } = {}) {
+  if (privateOnly && !isPrivate) {
+    return;
+  }
+  await sendMessage(chatId, "دسترسی شما به این ربات محدود شده است.", token);
+}
+
 async function processUpdate(update, env, origin) {
   const token = getBotToken(env);
 
@@ -105,9 +113,14 @@ async function processUpdate(update, env, origin) {
       return;
     }
 
+    await loadRuntimeConfig(env);
+
     if (update.inline_query) {
       const from = update.inline_query.from;
       if (from?.id && (await isUserBanned(env, from.id))) {
+        return;
+      }
+      if (from?.id && !(await isUserAllowed(env, from.id))) {
         return;
       }
       await touchUser(env, from);
@@ -122,6 +135,12 @@ async function processUpdate(update, env, origin) {
         return;
       }
       if (from?.id && from.id !== chatId && (await isUserBanned(env, from.id))) {
+        return;
+      }
+      if (chatId && !(await isUserAllowed(env, chatId))) {
+        return;
+      }
+      if (from?.id && from.id !== chatId && !(await isUserAllowed(env, from.id))) {
         return;
       }
       await touchUser(env, from, update.callback_query.message?.chat);
@@ -142,16 +161,23 @@ async function processUpdate(update, env, origin) {
     await touchUser(env, message.from, message.chat);
     await incrementStat(env, "messages");
 
+    const isPrivate = message.chat?.type === "private" || !message.chat?.type;
+
     if (await isUserBanned(env, chatId)) {
-      const isPrivate = message.chat?.type === "private" || !message.chat?.type;
-      if (isPrivate) {
-        await sendMessage(chatId, "دسترسی شما به این ربات قطع شده است.", token);
-      }
+      await denyAccess(chatId, token, { privateOnly: true, isPrivate });
+      return;
+    }
+
+    if (!(await isUserAllowed(env, chatId))) {
+      await denyAccess(chatId, token, { privateOnly: true, isPrivate });
       return;
     }
 
     if (message.from?.id && String(message.from.id) !== String(chatId)) {
       if (await isUserBanned(env, message.from.id)) {
+        return;
+      }
+      if (!(await isUserAllowed(env, message.from.id))) {
         return;
       }
     }

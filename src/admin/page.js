@@ -93,6 +93,34 @@ function renderAdminPage() {
     </section>
 
     <section>
+      <h2>تنظیمات عملیاتی (runtime)</h2>
+      <p class="muted" style="margin:0 0 .75rem;font-size:.85rem">جدا از vars دپلوی — در KV ذخیره می‌شود. Allowlist ≠ VIP.</p>
+      <div class="row">
+        <button type="button" id="btnAllowlistOn">Allowlist روشن</button>
+        <button type="button" class="secondary" id="btnAllowlistOff">Allowlist خاموش</button>
+        <button type="button" class="danger" id="btnQueuePause">توقف صف</button>
+        <button type="button" class="secondary" id="btnQueueResume">ادامه صف</button>
+      </div>
+      <div class="row">
+        <label>delay (s)</label>
+        <input id="cfgDelay" type="number" min="1" max="60" style="min-width:90px" />
+        <label>progress every</label>
+        <input id="cfgProgress" type="number" min="1" max="50" style="min-width:90px" />
+        <label>max URL attempts</label>
+        <input id="cfgAttempts" type="number" min="1" max="8" style="min-width:90px" />
+      </div>
+      <div class="row">
+        <label>daily limit</label>
+        <input id="cfgDailyLimit" type="number" min="0" max="5000" style="min-width:100px" />
+        <label>bulk cache</label>
+        <select id="cfgBulkCache"><option value="">env</option><option value="true">on</option><option value="false">off</option></select>
+        <button type="button" id="btnSaveRuntime">ذخیره overrides</button>
+        <button type="button" class="secondary" id="btnClearRuntimeNums">پاک‌کردن overrides عددی</button>
+      </div>
+      <pre id="runtimeOut" class="muted"></pre>
+    </section>
+
+    <section>
       <h2>کاربران شناخته‌شده</h2>
       <div class="row">
         <button type="button" id="btnLoadUsers">بارگذاری لیست</button>
@@ -171,7 +199,7 @@ function renderAdminPage() {
     </section>
 
     <section>
-      <h2>کاربر / پیام / VIP / سهمیه</h2>
+      <h2>کاربر / پیام / VIP / Allowlist / سهمیه</h2>
       <div class="row">
         <label>chatId</label>
         <input id="userChatId" placeholder="224032101" />
@@ -180,6 +208,12 @@ function renderAdminPage() {
         <button type="button" class="secondary" id="btnUnban">آن‌بن</button>
         <button type="button" id="btnVipOn">VIP</button>
         <button type="button" class="secondary" id="btnVipOff">عادی</button>
+        <button type="button" id="btnAllowOn">Allowlist</button>
+        <button type="button" class="secondary" id="btnAllowOff">بدون Allowlist</button>
+      </div>
+      <div class="row">
+        <button type="button" class="secondary" id="btnClearRecents">پاک کردن recents</button>
+        <button type="button" class="danger" id="btnWipeUser">Wipe کاربر</button>
       </div>
       <div class="row">
         <label>سقف روزانه (خالی=پیش‌فرض)</label>
@@ -239,6 +273,8 @@ function renderAdminPage() {
         ["progress every", String(c.progressEvery)],
         ["admin ids", (c.adminUserIds || []).join(", ") || "(none)"],
         ["daily download limit", String(c.defaultDailyDownloadLimit)],
+        ["allowlist mode", String(c.runtime?.allowlistMode ?? false)],
+        ["queue paused", String(c.runtime?.queuePaused ?? false)],
         ["today songs", String(t.songs || 0)],
         ["today artists", String(t.artists || 0)],
         ["today searches", String(t.searches || 0)],
@@ -250,6 +286,13 @@ function renderAdminPage() {
         recentErrors: data.recentErrors || [],
         recentAudit: data.recentAudit || [],
       }, null, 2);
+      const r = c.runtime || {};
+      $("cfgDelay").value = r.overrides?.artistQueueDelaySeconds ?? r.artistQueueDelaySeconds ?? "";
+      $("cfgProgress").value = r.overrides?.artistProgressEvery ?? r.artistProgressEvery ?? "";
+      $("cfgAttempts").value = r.overrides?.maxAudioUrlAttempts ?? r.maxAudioUrlAttempts ?? "";
+      $("cfgDailyLimit").value = r.overrides?.defaultDailyDownloadLimit ?? r.defaultDailyDownloadLimit ?? "";
+      $("cfgBulkCache").value = r.overrides?.enableBulkCacheWrites == null ? "" : String(r.overrides.enableBulkCacheWrites);
+      $("runtimeOut").textContent = JSON.stringify(r, null, 2);
     }
     function renderUsers(users) {
       if (!users.length) {
@@ -258,9 +301,11 @@ function renderAdminPage() {
       }
       $("usersBody").innerHTML = users.map((u) => {
         const name = u.username ? "@"+u.username : (u.firstName || "—");
-        const status = u.banned
-          ? '<span class="bad">banned</span>'
-          : (u.vip ? '<span class="ok">vip</span>' : '<span class="ok">ok</span>');
+        const flags = [];
+        if (u.banned) flags.push('<span class="bad">banned</span>');
+        if (u.vip) flags.push('<span class="ok">vip</span>');
+        if (u.allowlisted) flags.push('<span class="ok">allow</span>');
+        const status = flags.length ? flags.join(" ") : '<span class="ok">ok</span>';
         return '<tr data-chat="'+u.chatId+'"><td class="ltr">'+u.chatId+'</td><td>'+name+'</td><td class="ltr">'+(u.lastSeenAt || "—")+'</td><td>'+status+'</td><td>'+u.source+'</td></tr>';
       }).join("");
       [...$("usersBody").querySelectorAll("tr[data-chat]")].forEach((tr) => {
@@ -384,6 +429,57 @@ function renderAdminPage() {
     $("btnUnban").onclick = async () => { try { await patchUser({ banned: false }); } catch (e) { $("userOut").textContent = e.message; } };
     $("btnVipOn").onclick = async () => { try { await patchUser({ vip: true }); } catch (e) { $("userOut").textContent = e.message; } };
     $("btnVipOff").onclick = async () => { try { await patchUser({ vip: false }); } catch (e) { $("userOut").textContent = e.message; } };
+    $("btnAllowOn").onclick = async () => { try { await patchUser({ allowlisted: true }); } catch (e) { $("userOut").textContent = e.message; } };
+    $("btnAllowOff").onclick = async () => { try { await patchUser({ allowlisted: false }); } catch (e) { $("userOut").textContent = e.message; } };
+    $("btnClearRecents").onclick = async () => {
+      try {
+        if (!confirm("پاک کردن recents این کاربر؟")) return;
+        const data = await api("/admin/api/user/clear-recents", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim() }) });
+        $("userOut").textContent = JSON.stringify(data, null, 2);
+        await loadChat();
+      } catch (e) { $("userOut").textContent = e.message; }
+    };
+    $("btnWipeUser").onclick = async () => {
+      try {
+        if (!confirm("Wipe کامل پروفایل، recents و جاب‌های این chatId؟")) return;
+        const data = await api("/admin/api/user/wipe", { method: "POST", body: JSON.stringify({ chatId: $("userChatId").value.trim() }) });
+        $("userOut").textContent = JSON.stringify(data, null, 2);
+        await loadUsers(false);
+      } catch (e) { $("userOut").textContent = e.message; }
+    };
+    async function patchRuntime(extra) {
+      const data = await api("/admin/api/runtime", { method: "POST", body: JSON.stringify(extra) });
+      $("runtimeOut").textContent = JSON.stringify(data.runtime || data, null, 2);
+      await loadOverview();
+      return data;
+    }
+    $("btnAllowlistOn").onclick = async () => { try { await patchRuntime({ allowlistMode: true }); } catch (e) { $("runtimeOut").textContent = e.message; } };
+    $("btnAllowlistOff").onclick = async () => { try { await patchRuntime({ allowlistMode: false }); } catch (e) { $("runtimeOut").textContent = e.message; } };
+    $("btnQueuePause").onclick = async () => { try { await patchRuntime({ queuePaused: true }); } catch (e) { $("runtimeOut").textContent = e.message; } };
+    $("btnQueueResume").onclick = async () => { try { await patchRuntime({ queuePaused: false }); } catch (e) { $("runtimeOut").textContent = e.message; } };
+    $("btnSaveRuntime").onclick = async () => {
+      try {
+        const bulk = $("cfgBulkCache").value;
+        await patchRuntime({
+          artistQueueDelaySeconds: $("cfgDelay").value.trim() === "" ? null : Number($("cfgDelay").value),
+          artistProgressEvery: $("cfgProgress").value.trim() === "" ? null : Number($("cfgProgress").value),
+          maxAudioUrlAttempts: $("cfgAttempts").value.trim() === "" ? null : Number($("cfgAttempts").value),
+          defaultDailyDownloadLimit: $("cfgDailyLimit").value.trim() === "" ? null : Number($("cfgDailyLimit").value),
+          enableBulkCacheWrites: bulk === "" ? null : bulk === "true",
+        });
+      } catch (e) { $("runtimeOut").textContent = e.message; }
+    };
+    $("btnClearRuntimeNums").onclick = async () => {
+      try {
+        await patchRuntime({
+          artistQueueDelaySeconds: null,
+          artistProgressEvery: null,
+          maxAudioUrlAttempts: null,
+          defaultDailyDownloadLimit: null,
+          enableBulkCacheWrites: null,
+        });
+      } catch (e) { $("runtimeOut").textContent = e.message; }
+    };
     $("btnSaveQuota").onclick = async () => {
       try {
         const raw = $("userDailyLimit").value.trim();

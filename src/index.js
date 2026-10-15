@@ -12,10 +12,12 @@ import {
 import { handleArtistDeliveryDlq } from "./delivery/dlq.js";
 import { TelegramRateLimitError } from "./telegram/api.js";
 import { recordAdminError } from "./admin/ops-log.js";
+import { loadRuntimeConfig, isQueuePaused } from "./admin/runtime-config.js";
 
 const worker = {
   async fetch(request, env, ctx) {
     try {
+      await loadRuntimeConfig(env);
       return await handleHttpRequest(request, env, ctx);
     } catch (err) {
       console.error(`Error: ${err.message}`);
@@ -30,6 +32,8 @@ const worker = {
   },
 
   async queue(batch, env, ctx) {
+    await loadRuntimeConfig(env);
+
     if (batch.queue === ARTIST_DELIVERY_DLQ_NAME) {
       for (const message of batch.messages) {
         try {
@@ -38,6 +42,13 @@ const worker = {
           console.error(`Artist delivery DLQ handling failed: ${err.message}`);
         }
         message.ack();
+      }
+      return;
+    }
+
+    if (isQueuePaused(env)) {
+      for (const message of batch.messages) {
+        message.retry({ delaySeconds: 30 });
       }
       return;
     }

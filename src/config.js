@@ -69,11 +69,15 @@ const ADMIN_ERRORS_KEY = "admin-errors:v1";
 
 const ADMIN_AUDIT_KEY = "admin-audit:v1";
 
+const ADMIN_RUNTIME_CONFIG_KEY = "admin-runtime-config:v1";
+
 const ADMIN_ERRORS_LIMIT = 40;
 
 const ADMIN_AUDIT_LIMIT = 50;
 
 const DEFAULT_DAILY_DOWNLOAD_LIMIT = 80;
+
+const RUNTIME_CONFIG_CACHE = Symbol.for("rj.runtimeConfig");
 
 const RATE_LIMIT_FALLBACK_SECONDS = 5;
 
@@ -101,7 +105,15 @@ function getAdminToken(env) {
   return env.ADMIN_TOKEN?.trim() || "";
 }
 
+function getRuntimeConfigCache(env) {
+  return env?.[RUNTIME_CONFIG_CACHE] || null;
+}
+
 function getDefaultDailyDownloadLimit(env) {
+  const runtime = getRuntimeConfigCache(env);
+  if (runtime?.defaultDailyDownloadLimit != null) {
+    return Math.min(Math.max(0, Number(runtime.defaultDailyDownloadLimit) || 0), 5000);
+  }
   return Math.min(getEnvNumber(env, "DEFAULT_DAILY_DOWNLOAD_LIMIT", DEFAULT_DAILY_DOWNLOAD_LIMIT), 5000);
 }
 
@@ -124,18 +136,34 @@ function getEnvNumber(env, key, fallback) {
 }
 
 function shouldCacheArtistUploads(env) {
+  const runtime = getRuntimeConfigCache(env);
+  if (runtime?.enableBulkCacheWrites != null) {
+    return Boolean(runtime.enableBulkCacheWrites);
+  }
   return getEnvBoolean(env, "ENABLE_BULK_CACHE_WRITES", false);
 }
 
 function getArtistQueueDelaySeconds(env) {
+  const runtime = getRuntimeConfigCache(env);
+  if (runtime?.artistQueueDelaySeconds != null) {
+    return Math.min(Math.max(1, Number(runtime.artistQueueDelaySeconds) || 1), 60);
+  }
   return Math.min(getEnvNumber(env, "ARTIST_QUEUE_DELAY_SECONDS", 2), 60);
 }
 
 function getMaxAudioUrlAttempts(env) {
+  const runtime = getRuntimeConfigCache(env);
+  if (runtime?.maxAudioUrlAttempts != null) {
+    return Math.min(Math.max(1, Number(runtime.maxAudioUrlAttempts) || 1), 8);
+  }
   return Math.min(getEnvNumber(env, "MAX_AUDIO_URL_ATTEMPTS", DEFAULT_MAX_AUDIO_URL_ATTEMPTS), 8);
 }
 
 function getArtistProgressEvery(env) {
+  const runtime = getRuntimeConfigCache(env);
+  if (runtime?.artistProgressEvery != null) {
+    return Math.min(Math.max(1, Number(runtime.artistProgressEvery) || 1), 50);
+  }
   return Math.min(getEnvNumber(env, "ARTIST_PROGRESS_EVERY", 5), 50);
 }
 
@@ -228,9 +256,11 @@ export {
   ADMIN_STATS_PREFIX,
   ADMIN_ERRORS_KEY,
   ADMIN_AUDIT_KEY,
+  ADMIN_RUNTIME_CONFIG_KEY,
   ADMIN_ERRORS_LIMIT,
   ADMIN_AUDIT_LIMIT,
   DEFAULT_DAILY_DOWNLOAD_LIMIT,
+  RUNTIME_CONFIG_CACHE,
   CALLBACK_STORE_PREFIX,
   ADMIN_COOKIE_NAME,
   ADMIN_SESSION_TTL_S,
