@@ -99,7 +99,7 @@ test("runQueuedArtistMessage completes without enqueueing after final track", as
 
     assert.equal(telegram.calls.length, 2);
     assert.equal(env.queueMessages.length, 0);
-    assert.match(telegram.calls[1].init.body, /Done with ebi/);
+    assert.match(telegram.calls[1].init.body, /ارسال ebi تمام شد/);
   } finally {
     telegram.restore();
   }
@@ -152,7 +152,7 @@ test("runQueuedArtistMessage skips duplicate track keys and sends next unique tr
 
     assert.equal(telegram.calls.length, 2);
     assert.equal(env.queueMessages.length, 0);
-    assert.match(telegram.calls[1].init.body, /Done with ebi/);
+    assert.match(telegram.calls[1].init.body, /ارسال ebi تمام شد/);
   } finally {
     telegram.restore();
   }
@@ -301,7 +301,7 @@ test("enqueueArtistQueueDelivery serializes a second artist for the same chat", 
     assert.equal(env.queueMessages[0].payload.artistName, "chaartaar");
     assert.ok(env.ARTIST_JOB_STORE.store.has("artist-queue-active:v1:224032101"));
     assert.ok(env.ARTIST_JOB_STORE.store.has("artist-queue-pending:v1:224032101"));
-    assert.match(telegram.calls.at(-1).init.body, /Queued hichkas/);
+    assert.match(telegram.calls.at(-1).init.body, /hichkas \(1 آهنگ\) بعدی در صف/);
   } finally {
     telegram.restore();
   }
@@ -332,7 +332,7 @@ test("warm queue payloads force cache writes when sending tracks", async () => {
       ),
       true
     );
-    assert.match(telegram.calls.at(-1).init.body, /Warm complete for ebi/);
+    assert.match(telegram.calls.at(-1).init.body, /گرم‌کردن کش ebi تمام شد/);
   } finally {
     telegram.restore();
   }
@@ -370,7 +370,7 @@ test("runQueuedArtistMessage promotes a pending artist after completion", async 
     assert.equal(env.queueMessages.length, 1);
     assert.equal(env.queueMessages[0].payload.artistName, "hichkas");
     assert.equal(env.ARTIST_JOB_STORE.store.has("artist-queue-pending:v1:224032101"), false);
-    assert.match(JSON.stringify(telegram.calls.map((call) => call.init.body)), /Starting queued delivery for hichkas/);
+    assert.match(JSON.stringify(telegram.calls.map((call) => call.init.body)), /شروع ارسال صف‌شده برای hichkas/);
   } finally {
     telegram.restore();
   }
@@ -405,7 +405,7 @@ test("Worker DLQ handler auto-retries once before giving up", async () => {
     assert.equal(env.queueMessages.length, 1);
     assert.equal(env.queueMessages[0].payload.dlqRetryCount, 1);
     assert.equal(env.ARTIST_JOB_STORE.store.has("artist-queue-active:v1:224032101"), true);
-    assert.match(telegram.calls[0].init.body, /Auto-retrying once/);
+    assert.match(telegram.calls[0].init.body, /یک‌بار دیگر از آهنگ 7\/35/);
   } finally {
     telegram.restore();
   }
@@ -440,7 +440,7 @@ test("handleArtistDeliveryDlq gives up after one retry and promotes pending", as
 
     assert.equal(env.queueMessages.length, 1);
     assert.equal(env.queueMessages[0].payload.artistName, "chaartaar");
-    assert.match(telegram.calls[0].init.body, /stalled after repeated failures/);
+    assert.match(telegram.calls[0].init.body, /بعد از چند خطای پیاپی متوقف شد/);
   } finally {
     telegram.restore();
   }

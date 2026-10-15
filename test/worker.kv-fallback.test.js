@@ -37,7 +37,7 @@ test("runStatelessArtistBatch completes final track without continuation", async
     );
 
     assert.equal(telegram.calls.length, 2);
-    assert.match(telegram.calls[1].init.body, /Done with ebi/);
+    assert.match(telegram.calls[1].init.body, /ارسال ebi تمام شد/);
   } finally {
     telegram.restore();
   }

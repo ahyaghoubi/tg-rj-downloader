@@ -121,7 +121,7 @@ test("processUpdate /help and plain-text search send keyboard results", async ()
     assert.match(telegramBodies.at(-1), /\/search/);
 
     await processUpdate({ message: { chat: { id: 1 }, text: "ebi" } }, env, "https://worker.test");
-    assert.match(telegramBodies.join("\n"), /Search results/);
+    assert.match(telegramBodies.join("\n"), /نتایج جستجو/);
     assert.match(telegramBodies.join("\n"), /inline_keyboard/);
     assert.equal(env.ARTIST_JOB_STORE.store.has("user-recent:v1:1"), true);
   } finally {
@@ -163,7 +163,7 @@ test("inline query returns article results", async () => {
   try {
     await handleInlineQuery({ id: "iq1", query: "ebi", from: { id: 224032101 } }, env);
     const body = fetchMock.calls.find((call) => call.url.includes("answerInlineQuery"))?.init.body;
-    assert.match(body, /Artist: Ebi/);
+    assert.match(body, /خواننده: Ebi/);
     assert.match(body, /play\.radiojavan\.com\/song\/Ebi-Gheseh-Eshgh/);
   } finally {
     fetchMock.restore();
@@ -180,7 +180,7 @@ test("cancel stops an in-flight queue delivery", async () => {
   try {
     await cancelChatArtistDelivery(env, "224032101");
     assert.equal(env.ARTIST_JOB_STORE.store.has("artist-queue-cancel:v1:224032101"), true);
-    assert.match(telegram.calls.map((call) => call.init.body).join("\n"), /Cancel requested for ebi/);
+    assert.match(telegram.calls.map((call) => call.init.body).join("\n"), /لغو ebi/);
 
     await runQueuedArtistMessage(env, {
       chatId: "224032101",
@@ -209,7 +209,7 @@ test("cancel stops an in-flight queue delivery", async () => {
       sentTrackKeys: [],
       createdAt: new Date(Date.now() + 1000).toISOString(),
     });
-    assert.match(telegram.calls.at(-1).init.body, /Done with ebi/);
+    assert.match(telegram.calls.at(-1).init.body, /ارسال ebi تمام شد/);
   } finally {
     telegram.restore();
   }
@@ -236,14 +236,14 @@ test("admin status is restricted and available to configured admins", async () =
       env,
       "https://worker.test"
     );
-    assert.match(bodies.at(-1), /admin-only/);
+    assert.match(bodies.at(-1), /فقط برای ادمین/);
 
     await processUpdate(
       { message: { chat: { id: 224032101 }, from: { id: 224032101 }, text: "/status" } },
       env,
       "https://worker.test"
     );
-    assert.match(bodies.at(-1), /Admin status/);
+    assert.match(bodies.at(-1), /وضعیت ادمین/);
     assert.match(bodies.at(-1), /artistDlq|dlq/i);
   } finally {
     fetchMock.restore();
@@ -267,7 +267,7 @@ test("progress message is sent every N songs", async () => {
       failed: [],
       sentTrackKeys: [],
     });
-    assert.match(telegram.calls.map((call) => call.init.body).join("\n"), /Progress: 1\/2/);
+    assert.match(telegram.calls.map((call) => call.init.body).join("\n"), /پیشرفت: 1\/2/);
   } finally {
     telegram.restore();
   }

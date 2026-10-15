@@ -321,19 +321,19 @@ const MAX_RECENT_ITEMS = 5;
 const MAX_SEARCH_ARTISTS = 5;
 const MAX_SEARCH_SONGS = 8;
 const MAX_CALLBACK_BYTES = 64;
-const HELP_TEXT = `Radio Javan downloader commands:
+const HELP_TEXT = `دستورهای ربات دانلود رادیو جوان:
 
-/start — welcome
-/help — this help
-/search <query> — search songs & artists
-/recent — your last searches and downloads
-/cancel — stop the current artist delivery for this chat
-/status — admin status (admins only)
+/start — خوش‌آمدگویی
+/help — همین راهنما
+/search <عبارت> — جستجوی آهنگ و خواننده
+/recent — آخرین جستجوها و دانلودها
+/cancel — توقف ارسال آلبوم/خوانندهٔ در حال انجام
+/status — وضعیت ادمین (فقط ادمین‌ها)
 
-You can also:
-• Paste a Radio Javan song or artist link
-• Type a search query without /search
-• Use inline mode: @yourbot <query>`;
+همچنین می‌توانید:
+• لینک آهنگ یا خوانندهٔ رادیو جوان را بفرستید
+• بدون /search فقط عبارت جستجو را بنویسید
+• از حالت اینلاین استفاده کنید: @yourbot <عبارت>`;
 
 function getBotToken(env) {
   return env.BOT_TOKEN?.trim() || "";
@@ -797,9 +797,9 @@ async function sendArtistTracksAsAudio(userId, tracks, env) {
     }
   }
 
-  let summary = `Done. Sent ${sent}/${tracks.length} songs.`;
+  let summary = `تمام شد. ${sent}/${tracks.length} آهنگ ارسال شد.`;
   if (failed.length) {
-    summary += `\n\nCould not fetch:\n${failed.join("\n")}`;
+    summary += `\n\nارسال نشد:\n${failed.join("\n")}`;
   }
   await sendMessage(userId, summary, token);
 }
@@ -1304,7 +1304,7 @@ async function enqueueArtistDelivery(env, chatId, artistName, tracks, origin) {
     await replaceChatQueuedJob(env, chatId, job);
     await sendMessage(
       chatId,
-      `You already have a delivery in progress. Queued ${artistName} (${tracks.length} songs); it will start after the current one finishes.`,
+      `الان یک ارسال در حال انجام است. ${artistName} (${tracks.length} آهنگ) در صف قرار گرفت و بعد از اتمام مورد فعلی شروع می‌شود.`,
       token
     );
     return;
@@ -1315,7 +1315,7 @@ async function enqueueArtistDelivery(env, chatId, artistName, tracks, origin) {
     await replaceChatQueuedJob(env, chatId, job);
     await sendMessage(
       chatId,
-      `Updated your queued request to ${artistName} (${tracks.length} songs).`,
+      `درخواست صف‌شده به ${artistName} (${tracks.length} آهنگ) به‌روز شد.`,
       token
     );
     await promoteQueuedJobs(env, origin);
@@ -1326,7 +1326,7 @@ async function enqueueArtistDelivery(env, chatId, artistName, tracks, origin) {
   if (activeCount < getMaxActiveArtistJobs(env)) {
     await sendMessage(
       chatId,
-      `Found ${tracks.length} songs for ${artistName}. Sending...`,
+      `${tracks.length} آهنگ برای ${artistName} پیدا شد. در حال ارسال...`,
       token
     );
     await activateArtistJob(env, job, origin);
@@ -1337,7 +1337,7 @@ async function enqueueArtistDelivery(env, chatId, artistName, tracks, origin) {
   await putKv(kv, chatQueuedKey(chatId), job.id);
   await sendMessage(
     chatId,
-    `The bot is busy right now. Your request for ${artistName} (${tracks.length} songs) has been queued and will start automatically.`,
+    `ربات الان مشغول است. درخواست ${artistName} (${tracks.length} آهنگ) صف شد و به‌صورت خودکار شروع می‌شود.`,
     token
   );
 }
@@ -1346,7 +1346,7 @@ async function enqueueArtistQueueDelivery(env, chatId, artistName, tracks, optio
   const token = getBotToken(env);
   const payload = createQueuedArtistPayload(chatId, artistName, tracks, options);
   const kv = getJobStore(env);
-  const label = payload.warmCache ? "warm" : "delivery";
+  const label = payload.warmCache ? "گرم‌کردن کش" : "ارسال";
 
   if (kv) {
     const activeRaw = await kv.get(queueChatActiveKey(chatId));
@@ -1361,7 +1361,7 @@ async function enqueueArtistQueueDelivery(env, chatId, artistName, tracks, optio
       if (activeArtist && String(activeArtist).toLowerCase() === String(artistName).toLowerCase()) {
         await sendMessage(
           chatId,
-          `Already delivering ${artistName}. Progress continues automatically. Send /cancel to stop it.`,
+          `ارسال ${artistName} همین حالا در حال انجام است و ادامه پیدا می‌کند. برای توقف /cancel را بفرستید.`,
           token
         );
         return payload;
@@ -1370,9 +1370,9 @@ async function enqueueArtistQueueDelivery(env, chatId, artistName, tracks, optio
       await putKv(kv, queueChatPendingKey(chatId), JSON.stringify(payload));
       await sendMessage(
         chatId,
-        `You already have a delivery in progress` +
+        `الان یک ارسال در حال انجام است` +
           (activeArtist ? ` (${activeArtist})` : "") +
-          `. Queued ${artistName} ${label} (${tracks.length} songs) next. Send /cancel to stop the current one.`,
+          `. ${label} ${artistName} (${tracks.length} آهنگ) بعدی در صف است. برای توقف مورد فعلی /cancel را بفرستید.`,
         token
       );
       return payload;
@@ -1402,13 +1402,13 @@ async function enqueueArtistQueueDelivery(env, chatId, artistName, tracks, optio
   if (payload.warmCache) {
     await sendMessage(
       chatId,
-      `Warming cache for ${artistName}: ${tracks.length} uncached song(s)` +
-        (payload.originalTotal ? ` of ${payload.originalTotal}` : "") +
-        `. Already-cached tracks are skipped.`,
+      `در حال گرم‌کردن کش برای ${artistName}: ${tracks.length} آهنگ بدون کش` +
+        (payload.originalTotal ? ` از ${payload.originalTotal}` : "") +
+        `. آهنگ‌های قبلاً کش‌شده رد می‌شوند.`,
       token
     );
   } else {
-    await sendMessage(chatId, `Found ${tracks.length} songs for ${artistName}. Sending...`, token);
+    await sendMessage(chatId, `${tracks.length} آهنگ برای ${artistName} پیدا شد. در حال ارسال...`, token);
   }
   return payload;
 }
@@ -1418,7 +1418,7 @@ async function warmArtistMissingTracks(env, chatId, artistName) {
   try {
     const tracks = await fetchArtistTracks(env, artistName);
     if (!tracks.length) {
-      await sendMessage(chatId, `No songs found for ${artistName}.`, token);
+      await sendMessage(chatId, `آهنگی برای ${artistName} پیدا نشد.`, token);
       return { artistName, total: 0, missing: 0, queued: 0 };
     }
 
@@ -1426,7 +1426,7 @@ async function warmArtistMissingTracks(env, chatId, artistName) {
     if (!missing.length) {
       await sendMessage(
         chatId,
-        `All ${tracks.length} songs for ${artistName} are already cached. Nothing to warm.`,
+        `همهٔ ${tracks.length} آهنگ ${artistName} از قبل در کش هستند. چیزی برای گرم‌کردن نیست.`,
         token
       );
       return { artistName, total: tracks.length, missing: 0, queued: 0 };
@@ -1447,7 +1447,7 @@ async function warmArtistMissingTracks(env, chatId, artistName) {
     };
   } catch (err) {
     console.error(`Warm artist ${artistName} failed: ${err.message}`);
-    await sendMessage(chatId, `Warm failed for ${artistName}: ${err.message}`, token);
+    await sendMessage(chatId, `گرم‌کردن کش برای ${artistName} ناموفق بود: ${err.message}`, token);
     throw err;
   }
 }
@@ -1503,7 +1503,7 @@ async function promotePendingQueueChatDelivery(env, chatId) {
   await enqueueArtistQueueMessage(env, pending);
   await sendMessage(
     chatId,
-    `Starting queued delivery for ${pending.artistName} (${pending.total || pending.tracks.length} songs)...`,
+    `شروع ارسال صف‌شده برای ${pending.artistName} (${pending.total || pending.tracks.length} آهنگ)...`,
     getBotToken(env)
   );
 }
@@ -1542,7 +1542,7 @@ async function handleArtistDeliveryDlq(env, body) {
   const payload = normalizeQueuePayload(body);
   const token = getBotToken(env);
   const nextSong = Math.min((payload.nextIndex || 0) + 1, payload.total || 0);
-  const progress = `Stopped at song ${nextSong}/${payload.total || 0} (sent ${payload.sent || 0}).`;
+  const progress = `در آهنگ ${nextSong}/${payload.total || 0} متوقف شد (ارسال‌شده: ${payload.sent || 0}).`;
   const retryCount = Number(payload.dlqRetryCount || 0);
   console.error(
     `Artist delivery DLQ for ${payload.artistName} chat ${payload.chatId}: ${progress} retry=${retryCount}`
@@ -1557,7 +1557,7 @@ async function handleArtistDeliveryDlq(env, body) {
       await enqueueArtistQueueMessage(env, payload, { delaySeconds });
       await sendMessage(
         payload.chatId,
-        `Artist delivery for ${payload.artistName} hit the DLQ. Auto-retrying once from song ${nextSong}/${payload.total}...`,
+        `ارسال ${payload.artistName} به صف خطا رفت. یک‌بار دیگر از آهنگ ${nextSong}/${payload.total} تلاش می‌شود...`,
         token
       );
       console.log(`DLQ auto-retry queued for ${payload.artistName} chat ${payload.chatId}`);
@@ -1570,7 +1570,7 @@ async function handleArtistDeliveryDlq(env, body) {
   try {
     await sendMessage(
       payload.chatId,
-      `Artist delivery for ${payload.artistName} stalled after repeated failures. ${progress} Send the artist link again or /search ${payload.artistName}.`,
+      `ارسال ${payload.artistName} بعد از چند خطای پیاپی متوقف شد. ${progress} دوباره لینک خواننده را بفرستید یا /search ${payload.artistName}.`,
       token
     );
   } catch (err) {
@@ -1761,7 +1761,7 @@ async function runQueuedArtistMessage(env, body) {
       if (every > 0 && payload.sent % every === 0 && payload.nextIndex < payload.total) {
         await sendMessage(
           payload.chatId,
-          `Progress: ${payload.sent}/${payload.total} songs sent for ${payload.artistName}...`,
+          `پیشرفت: ${payload.sent}/${payload.total} آهنگ از ${payload.artistName} ارسال شد...`,
           token
         );
       }
@@ -1780,12 +1780,12 @@ async function runQueuedArtistMessage(env, body) {
 
   if (payload.nextIndex >= payload.total) {
     let summary = payload.warmCache
-      ? `Warm complete for ${payload.artistName}. Cached/sent ${payload.sent}/${payload.total} previously missing songs` +
-        (payload.originalTotal ? ` (${payload.originalTotal} total in catalog)` : "") +
+      ? `گرم‌کردن کش ${payload.artistName} تمام شد. ${payload.sent}/${payload.total} آهنگِ قبلیِ بدون کش ارسال/کش شد` +
+        (payload.originalTotal ? ` (از ${payload.originalTotal} آهنگ کل)` : "") +
         `.`
-      : `Done with ${payload.artistName}. Sent ${payload.sent}/${payload.total} songs.`;
+      : `ارسال ${payload.artistName} تمام شد. ${payload.sent}/${payload.total} آهنگ ارسال شد.`;
     if (payload.failed.length) {
-      summary += `\n\nCould not send:\n${payload.failed.join("\n")}`;
+      summary += `\n\nارسال نشد:\n${payload.failed.join("\n")}`;
     }
     await sendMessage(payload.chatId, summary, token);
     console.log(`Queue artist delivery ${payload.artistName}: completed`);
@@ -1828,7 +1828,7 @@ async function runStatelessArtistBatch(env, payload, origin) {
       if (err instanceof TelegramRateLimitError) {
         await sendMessage(
           payload.chatId,
-          `Telegram rate-limited delivery. Retrying later is needed for ${payload.artistName}.`,
+          `تلگرام ارسال را محدود کرده است. برای ادامهٔ ${payload.artistName} بعداً دوباره تلاش کنید.`,
           token
         );
         return;
@@ -1843,9 +1843,9 @@ async function runStatelessArtistBatch(env, payload, origin) {
   }
 
   if (payload.nextIndex >= payload.total) {
-    let summary = `Done with ${payload.artistName}. Sent ${payload.sent}/${payload.total} songs.`;
+    let summary = `ارسال ${payload.artistName} تمام شد. ${payload.sent}/${payload.total} آهنگ ارسال شد.`;
     if (payload.failed.length) {
-      summary += `\n\nCould not send:\n${payload.failed.join("\n")}`;
+      summary += `\n\nارسال نشد:\n${payload.failed.join("\n")}`;
     }
     await sendMessage(payload.chatId, summary, token);
     return;
@@ -1855,7 +1855,7 @@ async function runStatelessArtistBatch(env, payload, origin) {
   if (!triggered) {
     await sendMessage(
       payload.chatId,
-      `Artist delivery paused at ${payload.sent}/${payload.total} songs because the temporary no-KV continuation could not be started.`,
+      `ارسال در ${payload.sent}/${payload.total} آهنگ متوقف شد چون ادامهٔ موقت بدون KV شروع نشد.`,
       token
     );
   }
@@ -1875,7 +1875,7 @@ async function runArtistJobBatch(env, jobId, origin, ctx) {
       try {
         await sendMessage(
           job.chatId,
-          "Cloudflare KV write quota has been reached, so artist delivery is paused until the daily quota resets.",
+          "سهمیهٔ نوشتن KV کلادفلر پر شده است؛ ارسال خواننده تا ریست سهمیهٔ روزانه متوقف می‌ماند.",
           getBotToken(env)
         );
       } catch (sendErr) {
@@ -2021,9 +2021,9 @@ async function completeArtistJob(env, job, origin) {
   await clearChatActiveIfMatches(env, job.chatId, job.id);
   await removeFromIndex(kv, ACTIVE_INDEX_KEY, job.id);
 
-  let summary = `Done with ${job.artistName}. Sent ${job.sent}/${job.total} songs.`;
+  let summary = `ارسال ${job.artistName} تمام شد. ${job.sent}/${job.total} آهنگ ارسال شد.`;
   if (job.failed.length) {
-    summary += `\n\nCould not send:\n${job.failed.join("\n")}`;
+    summary += `\n\nارسال نشد:\n${job.failed.join("\n")}`;
   }
   try {
     await sendMessage(job.chatId, summary, token);
@@ -2167,7 +2167,7 @@ async function cancelChatArtistDelivery(env, chatId) {
   const kv = getJobStore(env);
   const token = getBotToken(env);
   if (!kv) {
-    await sendMessage(chatId, "Cancel is unavailable without ARTIST_JOB_STORE.", token);
+    await sendMessage(chatId, "بدون ARTIST_JOB_STORE امکان لغو وجود ندارد.", token);
     return { cancelled: false };
   }
 
@@ -2197,8 +2197,8 @@ async function cancelChatArtistDelivery(env, chatId) {
   await sendMessage(
     chatId,
     activeArtist
-      ? `Cancel requested for ${activeArtist}. Delivery will stop shortly.`
-      : "No active artist delivery found for this chat. If songs are still arriving, wait a moment and try /cancel again.",
+      ? `لغو ${activeArtist} ثبت شد. ارسال به‌زودی متوقف می‌شود.`
+      : "ارسال فعالِ خواننده‌ای برای این چت پیدا نشد. اگر هنوز آهنگ می‌آید، کمی صبر کنید و دوباره /cancel بفرستید.",
     token
   );
   return { cancelled: true, activeArtist };
@@ -2282,21 +2282,21 @@ async function resolveCallbackData(env, data) {
 }
 
 function summarizeSearchResults(artists, songs) {
-  const lines = ["Search results — tap a button:"];
+  const lines = ["نتایج جستجو — روی دکمه بزنید:"];
   if (artists.length) {
-    lines.push("", "Artists:");
+    lines.push("", "خواننده‌ها:");
     for (const artist of artists) {
       lines.push(`• ${artist.name}`);
     }
   }
   if (songs.length) {
-    lines.push("", "Songs:");
+    lines.push("", "آهنگ‌ها:");
     for (const song of songs) {
       lines.push(`• ${song.artist ? `${song.artist} - ` : ""}${song.song || song.title || song.permlink}`);
     }
   }
   if (!artists.length && !songs.length) {
-    return "No songs or artists found.";
+    return "آهنگ یا خواننده‌ای پیدا نشد.";
   }
   return lines.join("\n");
 }
@@ -2398,16 +2398,16 @@ async function handleSearchQuery(chatId, query, env) {
   const token = getBotToken(env);
   const trimmed = String(query || "").trim();
   if (!trimmed) {
-    await sendMessage(chatId, "Usage: /search <song or artist>", token);
+    await sendMessage(chatId, "نحوهٔ استفاده: /search <آهنگ یا خواننده>", token);
     return;
   }
 
-  await sendMessage(chatId, `Searching for "${trimmed}"...`, token);
+  await sendMessage(chatId, `در حال جستجو برای «${trimmed}»...`, token);
   const { artists, songs } = await searchRadioJavan(env, trimmed);
   await pushUserRecent(env, chatId, { type: "search", value: trimmed, label: trimmed });
 
   if (!artists.length && !songs.length) {
-    await sendMessage(chatId, `No results for "${trimmed}".`, token);
+    await sendMessage(chatId, `نتیجه‌ای برای «${trimmed}» پیدا نشد.`, token);
     return;
   }
 
@@ -2421,15 +2421,15 @@ async function handleRecentCommand(chatId, env) {
   const token = getBotToken(env);
   const recents = await readUserRecents(env, chatId);
   if (!recents.length) {
-    await sendMessage(chatId, "No recent searches or downloads yet.", token);
+    await sendMessage(chatId, "هنوز جستجو یا دانلودی ثبت نشده است.", token);
     return;
   }
 
   const rows = [];
-  const lines = ["Recent activity:"];
+  const lines = ["فعالیت‌های اخیر:"];
   for (const item of recents) {
     if (item.type === "search") {
-      lines.push(`• search: ${item.label || item.value}`);
+      lines.push(`• جستجو: ${item.label || item.value}`);
       rows.push([
         {
           text: `🔎 ${item.label || item.value}`.slice(0, 64),
@@ -2437,7 +2437,7 @@ async function handleRecentCommand(chatId, env) {
         },
       ]);
     } else if (item.type === "artist") {
-      lines.push(`• artist: ${item.label || item.value}`);
+      lines.push(`• خواننده: ${item.label || item.value}`);
       rows.push([
         {
           text: `🎤 ${item.label || item.value}`.slice(0, 64),
@@ -2445,7 +2445,7 @@ async function handleRecentCommand(chatId, env) {
         },
       ]);
     } else if (item.type === "song") {
-      lines.push(`• song: ${item.label || item.value}`);
+      lines.push(`• آهنگ: ${item.label || item.value}`);
       rows.push([
         {
           text: `🎵 ${item.label || item.value}`.slice(0, 64),
@@ -2463,7 +2463,7 @@ async function handleRecentCommand(chatId, env) {
 async function handleStatusCommand(chatId, userId, env) {
   const token = getBotToken(env);
   if (!isAdminUser(env, userId)) {
-    await sendMessage(chatId, " /status is admin-only.", token);
+    await sendMessage(chatId, "/status فقط برای ادمین است.", token);
     return;
   }
 
@@ -2484,16 +2484,16 @@ async function handleStatusCommand(chatId, userId, env) {
   }
 
   const lines = [
-    "Admin status",
-    `bot queue: ${ARTIST_DELIVERY_QUEUE_NAME}`,
-    `dlq: ${ARTIST_DELIVERY_DLQ_NAME}`,
-    `bulkCacheWrites: ${shouldCacheArtistUploads(env)}`,
-    `queueDelay: ${getArtistQueueDelaySeconds(env)}s`,
-    `progressEvery: ${getArtistProgressEvery(env)}`,
-    `active: ${active ? `${active.artistName} (${active.total || "?"})` : "none"}`,
-    `pending: ${pending ? `${pending.artistName} (${pending.total || pending.tracks?.length || "?"})` : "none"}`,
-    `cancelFlag: ${cancel ? "yes" : "no"}`,
-    `admins: ${getAdminUserIds(env).join(", ") || "(none)"}`,
+    "وضعیت ادمین",
+    `صف ربات: ${ARTIST_DELIVERY_QUEUE_NAME}`,
+    `صف خطا (dlq): ${ARTIST_DELIVERY_DLQ_NAME}`,
+    `نوشتن انبوه کش: ${shouldCacheArtistUploads(env)}`,
+    `تأخیر صف: ${getArtistQueueDelaySeconds(env)}ث`,
+    `بازهٔ پیشرفت: ${getArtistProgressEvery(env)}`,
+    `فعال: ${active ? `${active.artistName} (${active.total || "?"})` : "هیچ"}`,
+    `در انتظار: ${pending ? `${pending.artistName} (${pending.total || pending.tracks?.length || "?"})` : "هیچ"}`,
+    `پرچم لغو: ${cancel ? "بله" : "خیر"}`,
+    `ادمین‌ها: ${getAdminUserIds(env).join(", ") || "(هیچ)"}`,
   ];
   await sendMessage(chatId, lines.join("\n"), token);
 }
@@ -2514,7 +2514,7 @@ async function handleCallbackQuery(callbackQuery, env, origin) {
 
   const resolved = await resolveCallbackData(env, data);
   if (!resolved?.type || !resolved?.value) {
-    await sendMessage(chatId, "That button expired. Please search again.", token);
+    await sendMessage(chatId, "این دکمه منقضی شده. لطفاً دوباره جستجو کنید.", token);
     return;
   }
 
@@ -2545,7 +2545,7 @@ async function handleCallbackQuery(callbackQuery, env, origin) {
     return;
   }
 
-  await sendMessage(chatId, "Unknown button action.", token);
+  await sendMessage(chatId, "عملکرد این دکمه شناخته نشد.", token);
 }
 
 async function handleInlineQuery(inlineQuery, env) {
@@ -2588,8 +2588,8 @@ async function handleInlineQuery(inlineQuery, env) {
     results.push({
       type: "article",
       id: `a-${String(artist.query || artist.name).slice(0, 40)}`,
-      title: `Artist: ${artist.name}`,
-      description: "Send artist link to download all songs",
+      title: `خواننده: ${artist.name}`,
+      description: "ارسال لینک خواننده برای دانلود همهٔ آهنگ‌ها",
       input_message_content: { message_text: link },
     });
   }
@@ -2599,7 +2599,7 @@ async function handleInlineQuery(inlineQuery, env) {
       type: "article",
       id: `s-${String(song.permlink).slice(0, 50)}`,
       title: song.artist ? `${song.artist} - ${song.song || song.title}` : song.song || song.title || song.permlink,
-      description: "Send song link to download",
+      description: "ارسال لینک آهنگ برای دانلود",
       input_message_content: { message_text: link },
     });
   }
@@ -2608,10 +2608,12 @@ async function handleInlineQuery(inlineQuery, env) {
     results.push({
       type: "article",
       id: "empty",
-      title: query ? "No results" : "Type to search Radio Javan",
-      description: query ? `Nothing found for ${query}` : "Try an artist or song name",
+      title: query ? "نتیجه‌ای نیست" : "برای جستجو در رادیو جوان بنویسید",
+      description: query ? `چیزی برای ${query} پیدا نشد` : "نام خواننده یا آهنگ را امتحان کنید",
       input_message_content: {
-        message_text: query ? `No Radio Javan results for ${query}` : "Type @bot <query> to search Radio Javan",
+        message_text: query
+          ? `نتیجه‌ای در رادیو جوان برای ${query} پیدا نشد`
+          : "برای جستجو بنویسید: @bot <عبارت>",
       },
     });
   }
@@ -2661,7 +2663,7 @@ async function processUpdate(update, env, origin) {
     if (command?.name === "start") {
       await sendMessage(
         chatId,
-        "Welcome to the Radio Javan downloader bot.\n\nSend a song/artist link, use /search, or try inline mode.\n\n" +
+        "به ربات دانلود رادیو جوان خوش آمدید.\n\nلینک آهنگ/خواننده بفرستید، از /search استفاده کنید، یا حالت اینلاین را امتحان کنید.\n\n" +
           HELP_TEXT,
         token
       );
@@ -2730,7 +2732,7 @@ async function processUpdate(update, env, origin) {
       update.callback_query?.from?.id;
     if (chatId && token) {
       try {
-        await sendMessage(chatId, `❌ Bot error: ${err.message}`, token);
+        await sendMessage(chatId, `❌ خطای ربات: ${err.message}`, token);
       } catch (sendErr) {
         console.error(`Failed to send error message: ${sendErr.message}`);
       }
@@ -2749,14 +2751,14 @@ async function handleUrl(userId, url, env, origin) {
 
     if (mediaType === "artist") {
       const artistName = extractArtistName(url);
-      await sendMessage(userId, `Fetching songs for ${artistName}...`, getBotToken(env));
+      await sendMessage(userId, `در حال دریافت آهنگ‌های ${artistName}...`, getBotToken(env));
 
       let tracks;
       try {
         tracks = await fetchArtistTracks(env, artistName);
       } catch (err) {
         console.error(`Error fetching artist songs: ${err.message}`);
-        await sendMessage(userId, `❌ Error fetching artist songs: ${err.message}`, getBotToken(env));
+        await sendMessage(userId, `❌ خطا در دریافت آهنگ‌های خواننده: ${err.message}`, getBotToken(env));
         return;
       }
 
@@ -2780,7 +2782,7 @@ async function handleUrl(userId, url, env, origin) {
           console.warn(`KV quota reached; using stateless artist delivery for ${artistName}.`);
           await sendMessage(
             userId,
-            "Cloudflare KV write quota is reached, so delivery will continue without resumable progress until the quota resets.",
+            "سهمیهٔ نوشتن KV کلادفلر پر شده است؛ تا ریست سهمیه، ارسال بدون پیشرفت قابل ازسرگیری ادامه می‌یابد.",
             getBotToken(env)
           );
           await triggerStatelessArtistRun(
@@ -2792,24 +2794,24 @@ async function handleUrl(userId, url, env, origin) {
         return;
       }
 
-      await sendMessage(userId, `Found ${tracks.length} songs. Sending...`, getBotToken(env));
+      await sendMessage(userId, `${tracks.length} آهنگ پیدا شد. در حال ارسال...`, getBotToken(env));
       await sendArtistTracksAsAudio(userId, tracks, env);
       return;
     }
 
     if (mediaType === "video" || mediaType === "podcast") {
-      await sendMessage(userId, "Only song links are supported.", getBotToken(env));
+      await sendMessage(userId, "فقط لینک آهنگ پشتیبانی می‌شود.", getBotToken(env));
       return;
     }
 
     if (!isSupportedMediaType(mediaType)) {
-      await sendMessage(userId, "Unsupported media type!", getBotToken(env));
+      await sendMessage(userId, "این نوع رسانه پشتیبانی نمی‌شود!", getBotToken(env));
       return;
     }
 
     const { urls, title } = await resolveDownloadUrls(env, mediaType, mediaName);
     if (!urls.length) {
-      await sendMessage(userId, "Unsupported media type!", getBotToken(env));
+      await sendMessage(userId, "این نوع رسانه پشتیبانی نمی‌شود!", getBotToken(env));
       return;
     }
 
@@ -2826,7 +2828,7 @@ async function handleUrl(userId, url, env, origin) {
       console.error(`Error sending media: ${err.message}`);
       await sendMessage(
         userId,
-        `The file could not be uploaded to Telegram. Download it here: ${urls[0]}`,
+        `فایل به تلگرام آپلود نشد. از اینجا دانلود کنید: ${urls[0]}`,
         getBotToken(env)
       );
     }
@@ -2835,14 +2837,14 @@ async function handleUrl(userId, url, env, origin) {
     if (err instanceof KvWriteLimitError) {
       await sendMessage(
         userId,
-        "Cloudflare KV write quota has been reached. Please try again after the daily quota resets.",
+        "سهمیهٔ نوشتن KV کلادفلر پر شده است. بعد از ریست سهمیهٔ روزانه دوباره تلاش کنید.",
         getBotToken(env)
       );
       return;
     }
     await sendMessage(
       userId,
-      `The file could not be processed. Download it here: ${url}`,
+      `فایل پردازش نشد. از اینجا دانلود کنید: ${url}`,
       getBotToken(env)
     );
   }
