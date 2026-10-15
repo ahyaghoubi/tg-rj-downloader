@@ -121,6 +121,7 @@ A Cloudflare Worker script that turns your Telegram bot into a Radio Javan media
    - Set up environment variables and secrets:
      - `BOT_TOKEN` — your Telegram Bot Token (**required**, set as a Worker secret or variable)
      - `JOB_RUNNER_SECRET` — shared secret that protects `POST /internal/warm-artist` (**required for cache warm**)
+     - `ADMIN_TOKEN` — password for the `/admin` dashboard (**required for admin UI**)
      - `RJ_API_KEY` — Radio Javan API key (optional; defaults built in)
      - `RJ_USER_AGENT` — Radio Javan client user agent (optional; defaults built in)
    - Create and bind the KV namespaces and Queue (see [Cloudflare Bindings](#cloudflare-bindings)):
@@ -217,7 +218,10 @@ Artist delivery uses [Cloudflare Queues](https://developers.cloudflare.com/queue
    ```sh
    npx wrangler secret put BOT_TOKEN
    npx wrangler secret put JOB_RUNNER_SECRET
+   npx wrangler secret put ADMIN_TOKEN
    ```
+
+   Open the ops dashboard at `https://<your-worker>.workers.dev/admin` and sign in with `ADMIN_TOKEN`.
 
 **Notes**
 
@@ -279,6 +283,7 @@ src/
   config.js             # env helpers and constants
   messages/fa.js        # Farsi user-facing strings
   routes/http.js        # HTTP routing
+  admin/                # /admin dashboard (auth, users, API, HTML)
   bot/                  # commands, search, inline, callbacks, handleUrl
   rj/                   # Radio Javan API + URL/track helpers
   telegram/             # Bot API + sendTrackToUser

@@ -16,6 +16,7 @@ import { handleUrl } from "./handle-url.js";
 import { resolveStartPayload } from "./start-payload.js";
 import { presentArtistMenu, startArtistDelivery, enqueueBulkDelivery } from "./artist-menu.js";
 import { fetchPlaylistTracks, fetchAlbumTracks } from "../rj/tracks.js";
+import { isUserBanned, touchUser } from "../admin/users.js";
 
 async function handleStartPayload(chatId, payload, env, origin) {
   const resolved = await resolveStartPayload(env, payload);
@@ -103,11 +104,25 @@ async function processUpdate(update, env, origin) {
     }
 
     if (update.inline_query) {
+      const from = update.inline_query.from;
+      if (from?.id && (await isUserBanned(env, from.id))) {
+        return;
+      }
+      await touchUser(env, from);
       await handleInlineQuery(update.inline_query, env);
       return;
     }
 
     if (update.callback_query) {
+      const from = update.callback_query.from;
+      const chatId = update.callback_query.message?.chat?.id || from?.id;
+      if (chatId && (await isUserBanned(env, chatId))) {
+        return;
+      }
+      if (from?.id && from.id !== chatId && (await isUserBanned(env, from.id))) {
+        return;
+      }
+      await touchUser(env, from, update.callback_query.message?.chat);
       await handleCallbackQuery(update.callback_query, env, origin);
       return;
     }
@@ -120,6 +135,22 @@ async function processUpdate(update, env, origin) {
     const chatId = message.chat?.id;
     if (!chatId) {
       return;
+    }
+
+    await touchUser(env, message.from, message.chat);
+
+    if (await isUserBanned(env, chatId)) {
+      const isPrivate = message.chat?.type === "private" || !message.chat?.type;
+      if (isPrivate) {
+        await sendMessage(chatId, "دسترسی شما به این ربات قطع شده است.", token);
+      }
+      return;
+    }
+
+    if (message.from?.id && String(message.from.id) !== String(chatId)) {
+      if (await isUserBanned(env, message.from.id)) {
+        return;
+      }
     }
 
     const userId = message.from?.id || chatId;

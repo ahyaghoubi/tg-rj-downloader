@@ -47,7 +47,13 @@ const FILE_CACHE_PREFIX = "telegram-file:v1";
 
 const USER_RECENT_PREFIX = "user-recent:v1";
 
+const USER_PROFILE_PREFIX = "user:v1";
+
 const CALLBACK_STORE_PREFIX = "tg-cb:v1";
+
+const ADMIN_COOKIE_NAME = "rj_admin_session";
+
+const ADMIN_SESSION_TTL_S = 12 * 60 * 60;
 
 const RATE_LIMIT_FALLBACK_SECONDS = 5;
 
@@ -69,6 +75,10 @@ const MAX_START_PAYLOAD_BYTES = 64;
 
 function getBotToken(env) {
   return env.BOT_TOKEN?.trim() || "";
+}
+
+function getAdminToken(env) {
+  return env.ADMIN_TOKEN?.trim() || "";
 }
 
 function getEnvString(env, key, fallback = "") {
@@ -132,6 +142,10 @@ function userRecentKey(chatId) {
   return `${USER_RECENT_PREFIX}:${chatId}`;
 }
 
+function userKey(chatId) {
+  return `${USER_PROFILE_PREFIX}:${chatId}`;
+}
+
 function getJobStore(env) {
   return env.ARTIST_JOB_STORE || null;
 }
@@ -184,7 +198,10 @@ export {
   MIN_FILE_SIZE,
   FILE_CACHE_PREFIX,
   USER_RECENT_PREFIX,
+  USER_PROFILE_PREFIX,
   CALLBACK_STORE_PREFIX,
+  ADMIN_COOKIE_NAME,
+  ADMIN_SESSION_TTL_S,
   RATE_LIMIT_FALLBACK_SECONDS,
   MAX_RECENT_ITEMS,
   MAX_SEARCH_ARTISTS,
@@ -195,6 +212,7 @@ export {
   MAX_CALLBACK_BYTES,
   MAX_START_PAYLOAD_BYTES,
   getBotToken,
+  getAdminToken,
   getEnvString,
   getEnvBoolean,
   getEnvNumber,
@@ -208,6 +226,7 @@ export {
   queueChatPendingKey,
   queueChatCancelKey,
   userRecentKey,
+  userKey,
   getJobStore,
   getFileCacheStore,
   KvWriteLimitError,

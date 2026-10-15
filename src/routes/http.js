@@ -9,6 +9,7 @@ import { processUpdate } from "../bot/update.js";
 import { handleUrl } from "../bot/handle-url.js";
 import { warmArtistMissingTracks } from "../delivery/warm.js";
 import { normalizeArtistName } from "../rj/urls.js";
+import { handleAdminRequest } from "../admin/api.js";
 
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -53,6 +54,13 @@ async function handleHealth(env) {
 
 async function handleHttpRequest(request, env, ctx) {
   const url = new URL(request.url);
+
+  if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
+    const adminResponse = await handleAdminRequest(request, env, ctx);
+    if (adminResponse) {
+      return adminResponse;
+    }
+  }
 
   if (url.pathname === "/internal/warm-artist") {
     const secret = env.JOB_RUNNER_SECRET;
